@@ -1,11 +1,11 @@
 import { Client, GatewayIntentBits, Collection } from "discord.js";
-import fs from "fs/promises";
-import { startKeepAlive } from "./keepAlive.js";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { startKeepAlive } from "./keepAlive.js";
 
 // =======================
-// PATH FIX
+// PATH FIX (ESM)
 // =======================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,30 +14,34 @@ const __dirname = path.dirname(__filename);
 // CLIENT
 // =======================
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates
+  ],
 });
 
+// =======================
+// COMMAND HANDLER
+// =======================
 client.commands = new Collection();
 
-// =======================
-// LOAD COMMANDS
-// =======================
 const commandsPath = path.join(__dirname, "commands");
-const files = await fs.readdir(commandsPath);
+const commandFiles = fs
+  .readdirSync(commandsPath)
+  .filter(file => file.endsWith(".js"));
 
-for (const file of files) {
-  if (!file.endsWith(".js")) continue;
-  const cmd = await import(`./commands/${file}`);
-  client.commands.set(cmd.default.name, cmd.default);
+for (const file of commandFiles) {
+  const command = await import(`./commands/${file}`);
+  client.commands.set(command.default.name, command.default);
 }
 
 // =======================
-// INTERACTION HANDLER
+// INTERACTIONS
 // =======================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const command = commands.get(interaction.commandName);
+  const command = client.commands.get(interaction.commandName);
   if (!command) return;
 
   try {
@@ -51,26 +55,15 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-
-  try {
-    await command.execute(interaction);
-  } catch (err) {
-    console.error("❌ Command Error:", interaction.commandName);
-    console.error(err);
-
-    try {
-      await interaction.editReply("❌ An internal error occurred.");
-    } catch {
-      // interaction is gone
-    }
-  }
+// =======================
+// READY
+// =======================
+client.once("ready", () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
 // =======================
-// START BOT
+// START
 // =======================
-(async () => {
-  startKeepAlive();
-  await client.login(process.env.DISCORD_BOT_TOKEN);
-  console.log(`✅ Logged in as ${client.user.tag}`);
-})();
+startKeepAlive();
+client.login(process.env.DISCORD_BOT_TOKEN);
