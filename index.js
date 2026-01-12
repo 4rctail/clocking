@@ -112,6 +112,52 @@ client.on("interactionCreate", async interaction => {
   const history   = await readJSON(HISTORY_FILE);
 
   // =======================
+  // CLOCK IN
+  // =======================
+  if (interaction.commandName === "clockin") {
+    const uid = interaction.user.id;
+    timesheet[uid] ??= { logs: [] };
+
+    if (!member.voice?.channelId)
+      return interaction.reply("❌ Join voice first.");
+
+    if (timesheet[uid].active)
+      return interaction.reply("❌ Already clocked in.");
+
+    timesheet[uid].active = new Date().toISOString();
+
+    await writeJSON(ACTIVE_FILE, timesheet);
+    await syncFile("timesheet.json");
+
+    return interaction.reply("🟢 CLOCKED IN");
+  }
+
+  // =======================
+  // CLOCK OUT
+  // =======================
+  if (interaction.commandName === "clockout") {
+    const uid = interaction.user.id;
+    const data = timesheet[uid];
+
+    if (!data?.active)
+      return interaction.reply("❌ Not clocked in.");
+
+    const end = new Date().toISOString();
+    data.logs.push({
+      start: data.active,
+      end,
+      hours: diffHours(data.active, end),
+    });
+
+    delete data.active;
+
+    await writeJSON(ACTIVE_FILE, timesheet);
+    await syncFile("timesheet.json");
+
+    return interaction.reply("🔴 CLOCKED OUT");
+  }
+
+  // =======================
   // TIMESHEET
   // =======================
   if (interaction.commandName === "timesheet") {
@@ -130,7 +176,6 @@ client.on("interactionCreate", async interaction => {
 
       let sessions = "";
       let i = 1;
-
       let grandTotal = 0;
       let lastSessionHours = null;
 
