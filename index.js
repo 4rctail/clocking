@@ -34,16 +34,7 @@ try {
   users = {};
 }
 
-const members = await interaction.guild.members.fetch();
 
-for (const [id, m] of members) {
-  users[id] ??= {
-    username: m.user.username,
-    name: ""
-  };
-}
-
-await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
 
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
@@ -523,11 +514,13 @@ client.on("interactionCreate", async interaction => {
         ? `${startStr || "Beginning"} → ${endStr || "Now"}`
         : "All time";
     
+    const targetName = getHardName(target.id);
+    
     const embed = {
       title: "🧾 Timesheet",
       color: 0x3498db,
       fields: [
-        const targetName = getHardName(target.id);
+        { name: "👤 User", value: targetName, inline: true },
         { name: "📅 Range", value: rangeLabel, inline: true },
         { name: "🧮 Sessions", value: String(count), inline: true },
         {
@@ -544,6 +537,7 @@ client.on("interactionCreate", async interaction => {
       footer: { text: "Time Tracker" },
       timestamp: new Date().toISOString(),
     };
+
     
     return interaction.editReply({ embeds: [embed] });
   }
@@ -552,11 +546,7 @@ client.on("interactionCreate", async interaction => {
 // =======================
 // STARTUP
 // =======================
-(async () => {
-  startKeepAlive();
-  await loadFromGitHub();
-  await client.login(process.env.DISCORD_TOKEN);
-  client.once("ready", async () => {
+client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 
   const guild = client.guilds.cache.first();
@@ -576,6 +566,14 @@ client.on("interactionCreate", async interaction => {
 
   await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
   console.log("✅ users.json synced");
+});
+
+(async () => {
+  startKeepAlive();
+  await loadFromGitHub();
+  await client.login(process.env.DISCORD_TOKEN);
+})();
+
 });
 
 })();
