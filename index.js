@@ -23,6 +23,8 @@ const client = new Client({
   ],
 });
 
+
+
 function resolveDisplayName(interaction, member) {
   if (member?.displayName) return member.displayName;
   if (member?.nickname) return member.nickname;
@@ -79,6 +81,16 @@ function parseDate(str, end = false) {
   return date;
 }
 
+function formatElapsedLive(startISO) {
+  const diff = Date.now() - new Date(startISO).getTime();
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  return `${h}h ${m}m ${s}s`;
+}
+
+// Track live status updates per user
+const liveStatusTimers = new Map();
 
 // =======================
 // IN-MEMORY STATE
@@ -232,96 +244,228 @@ client.on("interactionCreate", async interaction => {
   timesheet[userId] ??= { logs: [] };
   
     // -------- TOTAL HOURS (ALL USERS) --------
-  if (interaction.commandName === "totalhr") {
-    let msg = "📊 **Total Hours (All Users)**\n\n";
-  
-    for (const [uid, u] of Object.entries(timesheet)) {
-      if (!u.logs?.length) continue;
-  
-      let total = 0;
-      for (const l of u.logs) {
-        const hours =
-          (new Date(l.end) - new Date(l.start)) / 3600000;
-        total += hours;
+    if (interaction.commandName === "totalhr") {
+      const rows = [];
+    
+      for (const [uid, u] of Object.entries(timesheet)) {
+        if (!u.logs?.length) continue;
+    
+        let total = 0;
+        for (const l of u.logs) {
+          const hours =
+            (new Date(l.end) - new Date(l.start)) / 3600000;
+          total += hours;
+        }
+    
+        // 🔴 SKIP USERS WITH TRUE ZERO
+        if (total <= 0) continue;
+    
+        // KEEP DECIMALS (0.01, 0.25, etc)
+        const safeTotal = Math.round(total * 100) / 100;
+    
+        let name = u.name || uid;
+    
+        try {
+          const m = await interaction.guild.members.fetch(uid);
+          name =
+            m.displayName ||
+            m.user.globalName ||
+            m.user.username;
+        } catch {}
+    
+        rows.push({ name, hours: safeTotal });
       }
-  
-      const safeTotal = Math.floor(total * 100) / 100;
-  
-      let name = timesheet[uid]?.name || uid;
-      
-      try {
-        const m = await interaction.guild.members.fetch(uid);
-        name = resolveDisplayName(interaction, m);
-      } catch {}
-
-  
-      msg += `${name} = ${safeTotal} hours\n`;
+    
+      if (!rows.length)
+        return interaction.editReply("📭 No recorded hours.");
+    
+      // SORT HIGHEST → LOWEST
+      rows.sort((a, b) => b.hours - a.hours);
+    
+      const description = rows
+        .map(r => `**${r.name}** — ${r.hours}h`)
+        .join("\n");
+    
+      const embed = {
+        title: "📊 Total Hours (All Users)",
+        description,
+        color: 0x2ecc71,
+        timestamp: new Date().toISOString(),
+      };
+    
+      return interaction.editReply({ embeds: [embed] });
     }
-  
-    return interaction.editReply(msg || "📭 No data.");
-  }
 
 
   // -------- CLOCK IN --------
+  // -------- CLOCK IN (EMBED) --------
   if (interaction.commandName === "clockin") {
-
     if (timesheet[userId].active)
       return interaction.editReply("❌ Already clocked in.");
-
-    timesheet[userId].active = nowISO();
+  
+    const start = nowISO();
+  
+    timesheet[userId].active = start;
     timesheet[userId].name = displayName;
-
+  
     await persist();
-
-    return interaction.editReply("🟢 Clocked IN");
+  
+    const voiceChannel =
+      interaction.member?.voice?.channel?.name || "Not in voice";
+  
+    const embed = {
+      title: "🟢 Clocked In",
+      color: 0x2ecc71,
+      fields: [
+        { name: "👤 User", value: displayName, inline: true },
+        { name: "📍 Voice Channel", value: voiceChannel, inline: true },
+        { name: "⏱ Start Time", value: formatDate(start), inline: false },
+      ],
+      footer: {
+        text: "Time Tracker",
+      },
+      timestamp: new Date(start).toISOString(),
+    };
+  
+    return interaction.editReply({ embeds: [embed] });
   }
 
+
   // -------- CLOCK OUT --------
+  // -------- CLOCK OUT (EMBED + DETAILS) --------
   if (interaction.commandName === "clockout") {
     const start = timesheet[userId].active;
     if (!start)
       return interaction.editReply("❌ Not clocked in.");
-
+  
     const end = nowISO();
+    const hours = diffHours(start, end);
+    const rounded = Math.round(hours * 100) / 100;
+  
     timesheet[userId].logs.push({
       start,
       end,
-      hours: diffHours(start, end),
+      hours,
     });
-
+  
     delete timesheet[userId].active;
+    timesheet[userId].name = displayName;
+  
     await persist();
-    
-      return interaction.editReply(
-        `🔴 Clocked OUT — ${diffHours(start, end).toFixed(2)}h`
-      );
-      
-
+  
+    const voiceChannel =
+      interaction.member?.voice?.channel?.name || "Not in voice";
+  
+    const embed = {
+      title: "🔴 Clocked Out",
+      color: 0xe74c3c,
+      fields: [
+        { name: "👤 User", value: displayName, inline: true },
+        { name: "📍 Voice Channel", value: voiceChannel, inline: true },
+        { name: "▶️ Started", value: formatDate(start), inline: false },
+        { name: "⏹ Ended", value: formatDate(end), inline: false },
+        { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
+      ],
+      footer: {
+        text: "Time Tracker",
+      },
+      timestamp: new Date(end).toISOString(),
+    };
+  
+    return interaction.editReply({ embeds: [embed] });
   }
+  
 
-  // -------- STATUS (FIXED) --------
+  // -------- STATUS (EMBED + LIVE UPDATE) --------
   if (interaction.commandName === "status") {
-    if (timesheet[userId].active) {
-      return interaction.editReply(
-        `🟢 CLOCKED IN\n` +
-        `👤 ${displayName}\n` +
-        `⏱ Started: ${formatDate(timesheet[userId].active)}\n` +
-        `⌛ Elapsed: ${elapsed(timesheet[userId].active)}`
-      );
+    // CLEAR EXISTING LIVE TIMER IF ANY
+    const existing = liveStatusTimers.get(userId);
+    if (existing) {
+      clearInterval(existing);
+      liveStatusTimers.delete(userId);
     }
-
-    const total = timesheet[userId].logs.reduce(
+  
+    // ===== CLOCKED IN =====
+    if (timesheet[userId].active) {
+      const start = timesheet[userId].active;
+  
+      const buildEmbed = () => ({
+        title: "🟢 Status: Clocked In",
+        color: 0x2ecc71,
+        fields: [
+          { name: "👤 User", value: displayName, inline: true },
+          {
+            name: "📍 Voice Channel",
+            value:
+              interaction.member?.voice?.channel?.name ||
+              "Not in voice",
+            inline: true,
+          },
+          {
+            name: "▶️ Started",
+            value: formatDate(start),
+            inline: false,
+          },
+          {
+            name: "⏱ Elapsed",
+            value: formatElapsedLive(start),
+            inline: true,
+          },
+        ],
+        footer: { text: "Live updating every 5 seconds" },
+        timestamp: new Date().toISOString(),
+      });
+  
+      // SEND INITIAL EMBED
+      await interaction.editReply({ embeds: [buildEmbed()] });
+  
+      // START LIVE UPDATES
+      const timer = setInterval(async () => {
+        // STOP IF USER CLOCKED OUT
+        if (!timesheet[userId]?.active) {
+          clearInterval(timer);
+          liveStatusTimers.delete(userId);
+          return;
+        }
+  
+        try {
+          await interaction.editReply({
+            embeds: [buildEmbed()],
+          });
+        } catch {
+          clearInterval(timer);
+          liveStatusTimers.delete(userId);
+        }
+      }, 5000);
+  
+      liveStatusTimers.set(userId, timer);
+      return;
+    }
+  
+    // ===== CLOCKED OUT =====
+    const total = (timesheet[userId].logs || []).reduce(
       (t, l) => t + l.hours,
       0
     );
-
-
-    return interaction.editReply(
-      `⚪ CLOCKED OUT\n` +
-      `👤 ${displayName}\n` +
-      `⏱ Total hours: ${total.toFixed(2)}h`
-    );
+  
+    const embed = {
+      title: "⚪ Status: Clocked Out",
+      color: 0x95a5a6,
+      fields: [
+        { name: "👤 User", value: displayName, inline: true },
+        {
+          name: "⏱ Total Recorded Time",
+          value: `${Math.round(total * 100) / 100}h`,
+          inline: true,
+        },
+      ],
+      footer: { text: "No active session" },
+      timestamp: new Date().toISOString(),
+    };
+  
+    return interaction.editReply({ embeds: [embed] });
   }
+
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
@@ -354,49 +498,78 @@ client.on("interactionCreate", async interaction => {
     }
   
     // ===== VIEW =====
+    // ===== VIEW (EMBED) =====
     const target =
       interaction.options.getMember("user") || interaction.member;
-  
-    const startStr = interaction.options.getString("start");
-    const endStr   = interaction.options.getString("end");
-  
-    const start = parseDate(startStr);
-    const end   = parseDate(endStr, true);
-  
-    const logs = timesheet[target.id]?.logs || [];
-    if (!logs.length)
-      return interaction.editReply("📭 No records found.");
-  
+    
     const targetName =
-      resolveDisplayName(interaction, target) ||
+      target?.displayName ||
+      target?.user?.globalName ||
+      target?.user?.username ||
       timesheet[target.id]?.name ||
       "Unknown User";
     
-    let msg = `🧾 Timesheet — ${targetName}\n\n`;
-
+    const startStr = interaction.options.getString("start");
+    const endStr   = interaction.options.getString("end");
+    
+    const start = parseDate(startStr);
+    const end   = parseDate(endStr, true);
+    
+    const logs = timesheet[target.id]?.logs || [];
+    if (!logs.length)
+      return interaction.editReply("📭 No records found.");
+    
     let total = 0;
-    let i = 1;
-  
+    let lines = [];
+    let count = 0;
+    
     for (const l of logs) {
       const s = new Date(l.start);
       if ((start && s < start) || (end && s > end)) continue;
-  
+    
       const hours =
         (new Date(l.end) - new Date(l.start)) / 3600000;
-  
+    
       total += hours;
-      msg += `${i}. ${formatSession(l.start, l.end)} (${hours.toFixed(2)}h)\n`;
-      i++;
+      count++;
+    
+      lines.push(
+        `**${count}.** ${formatSession(l.start, l.end)} — **${Math.round(hours * 100) / 100}h**`
+      );
     }
-  
-    if (i === 1)
+    
+    if (!count)
       return interaction.editReply("📭 No sessions in range.");
-  
-    const exactTotal = Math.floor(total * 100) / 100;
-  
-    msg += `\n⏱ Total: ${exactTotal}h`;
-    return interaction.editReply(msg);
-  }
+    
+    const rangeLabel =
+      startStr || endStr
+        ? `${startStr || "Beginning"} → ${endStr || "Now"}`
+        : "All time";
+    
+    const embed = {
+      title: "🧾 Timesheet",
+      color: 0x3498db,
+      fields: [
+        { name: "👤 User", value: targetName, inline: true },
+        { name: "📅 Range", value: rangeLabel, inline: true },
+        { name: "🧮 Sessions", value: String(count), inline: true },
+        {
+          name: "⏱ Total Hours",
+          value: `${Math.round(total * 100) / 100}h`,
+          inline: true,
+        },
+        {
+          name: "📋 Logs",
+          value: lines.join("\n"),
+          inline: false,
+        },
+      ],
+      footer: { text: "Time Tracker" },
+      timestamp: new Date().toISOString(),
+    };
+    
+    return interaction.editReply({ embeds: [embed] });
+    
 
   
 });
