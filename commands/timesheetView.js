@@ -5,6 +5,7 @@ const FILE = "./timesheet.json";
 function parseDate(str, end = false) {
   const [m, d, y] = str.split("/").map(Number);
   if (!m || !d || !y) return null;
+
   const date = new Date(y, m - 1, d);
   if (end) date.setHours(23, 59, 59, 999);
   return date;
@@ -39,8 +40,10 @@ export default {
     const sub = interaction.options.getSubcommand();
     if (sub !== "view") return;
 
-    const user = interaction.options.getUser("user") || interaction.user;
-    const uid = user.id;
+    // ✅ REQUIRED
+    await interaction.deferReply();
+
+    const uid = interaction.user.id;
 
     const startStr = interaction.options.getString("start");
     const endStr   = interaction.options.getString("end");
@@ -49,8 +52,9 @@ export default {
     const end   = endStr ? parseDate(endStr, true) : null;
 
     let data = {};
-    try { data = JSON.parse(await fs.readFile(FILE, "utf8")); }
-    catch {}
+    try {
+      data = JSON.parse(await fs.readFile(FILE, "utf8"));
+    } catch {}
 
     const logs = data[uid]?.logs || [];
 
@@ -67,8 +71,15 @@ export default {
       }
     }
 
+    // ✅ SAFE nickname fetch
+    let displayName = interaction.user.username;
+    try {
+      const member = await interaction.guild.members.fetch(uid);
+      displayName = member.displayName;
+    } catch {}
+
     await interaction.editReply(
-      `👤 **${interaction.guild.members.cache.get(uid)?.displayName || user.username}**\n` +
+      `👤 **${displayName}**\n` +
       `⏱ **Total: ${total.toFixed(2)}h**\n\n` +
       (output || "📭 No sessions found.")
     );
