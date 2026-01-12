@@ -40,24 +40,24 @@ client.on("interactionCreate", async interaction => {
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
 
+  // ✅ ACK IMMEDIATELY — REQUIRED ON RENDER
   try {
-    // ❗ DO NOT defer here
-    await command.execute(interaction);
-
+    await interaction.deferReply();
   } catch (err) {
-    console.error("❌ Command Error");
-    console.error("Command:", interaction.commandName);
+    // Interaction already expired — nothing we can do
+    return;
+  }
+
+  try {
+    await command.execute(interaction);
+  } catch (err) {
+    console.error("❌ Command Error:", interaction.commandName);
     console.error(err);
 
     try {
-      if (!interaction.replied) {
-        await interaction.reply({
-          content: "❌ An internal error occurred.",
-          ephemeral: true
-        });
-      }
+      await interaction.editReply("❌ An internal error occurred.");
     } catch {
-      // Interaction already expired — ignore
+      // interaction is gone
     }
   }
 });
