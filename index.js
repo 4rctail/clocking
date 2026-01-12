@@ -7,7 +7,7 @@ import { startKeepAlive } from "./keepAlive.js";
 // CONFIG
 // =======================
 const DATA_FILE = "./timesheet.json";
-
+const MANAGER_ROLE_NAME = "Manager"; // change if needed
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
@@ -22,6 +22,29 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates,
   ],
 });
+
+function formatSession(startISO, endISO) {
+  const s = new Date(startISO);
+  const e = new Date(endISO);
+
+  const sameDay =
+    s.getFullYear() === e.getFullYear() &&
+    s.getMonth() === e.getMonth() &&
+    s.getDate() === e.getDate();
+
+  const dateOpts = { month: "long", day: "numeric", year: "numeric" };
+  const timeOpts = { hour: "numeric", minute: "2-digit" };
+
+  const datePart = sameDay
+    ? s.toLocaleDateString("en-US", dateOpts)
+    : `${s.toLocaleDateString("en-US", dateOpts)} – ${e.toLocaleDateString("en-US", dateOpts)}`;
+
+  const timePart =
+    `${s.toLocaleTimeString("en-US", timeOpts)} - ${e.toLocaleTimeString("en-US", timeOpts)}`;
+
+  return `${datePart}, ${timePart}`;
+}
+
 
 // =======================
 // IN-MEMORY STATE
@@ -148,6 +171,10 @@ async function commitToGitHub() {
   console.log("✅ Timesheet committed to GitHub");
 }
 
+function hasManagerRole(member) {
+  return member.roles.cache.some(r => r.name === MANAGER_ROLE_NAME);
+}
+
 // =======================
 // SLASH COMMANDS
 // =======================
@@ -156,10 +183,40 @@ client.on("interactionCreate", async interaction => {
   await interaction.deferReply();
 
   const member = interaction.options.getMember("user") || interaction.member;
+  
   const userId = member.id;
   const displayName = member.nickname || member.user.username;
 
   timesheet[userId] ??= { logs: [] };
+  
+    // -------- TOTAL HOURS (ALL USERS) --------
+  if (interaction.commandName === "totalhr") {
+    let msg = "📊 **Total Hours (All Users)**\n\n";
+  
+    for (const [uid, u] of Object.entries(timesheet)) {
+      if (!u.logs?.length) continue;
+  
+      let total = 0;
+      for (const l of u.logs) {
+        const hours =
+          (new Date(l.end) - new Date(l.start)) / 3600000;
+        total += hours;
+      }
+  
+      const safeTotal = Math.floor(total * 100) / 100;
+  
+      let name = uid;
+      try {
+        const m = await interaction.guild.members.fetch(uid);
+        name = m.displayName;
+      } catch {}
+  
+      msg += `${name} = ${safeTotal} hours\n`;
+    }
+  
+    return interaction.editReply(msg || "📭 No data.");
+  }
+
 
   // -------- CLOCK IN --------
   if (interaction.commandName === "clockin") {
@@ -221,22 +278,31 @@ client.on("interactionCreate", async interaction => {
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
-    const logs = timesheet[userId].logs;
+    if (!hasManagerRole(interaction.member)) {
+      return interaction.editReply("❌ Only managers can view timesheets.");
+    }
+  
+    const logs = timesheet[userId]?.logs || [];
     if (!logs.length)
       return interaction.editReply("📭 No records found.");
-
-    let msg = `🧾 Timesheet — ${displayName}\n`;
+  
+    let msg = `🧾 Timesheet — ${displayName}\n\n`;
     let total = 0;
-
+  
     logs.forEach((l, i) => {
-      total += parseFloat(l.hours);
-      msg += `${i + 1}. ${formatDate(l.start)} → ${l.hours}h\n`;
+      const hours =
+        (new Date(l.end) - new Date(l.start)) / 3600000;
+  
+      total += hours;
+      msg += `${i + 1}. ${formatSession(l.start, l.end)}\n`;
     });
-
-    msg += `\n⏱ Total: ${total.toFixed(2)}h`;
+  
+    const safeTotal = Math.floor(total * 100) / 100;
+    msg += `\n⏱ Total hours: ${safeTotal}`;
+  
     return interaction.editReply(msg);
   }
-});
+  
 
 // =======================
 // STARTUP
