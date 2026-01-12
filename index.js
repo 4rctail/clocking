@@ -25,25 +25,16 @@ const client = new Client({
 });
 
 
-const USERS_FILE = "./users.json";
-let users = {};
 
-try {
-  users = JSON.parse(await fs.readFile(USERS_FILE, "utf8"));
-} catch {
-  users = {};
+function resolveDisplayName(interaction, member) {
+  if (member?.displayName) return member.displayName;
+  if (member?.nickname) return member.nickname;
+  if (member?.user?.globalName) return member.user.globalName;
+  if (member?.user?.username) return member.user.username;
+  return interaction.user.globalName
+      || interaction.user.username
+      || "Unknown User";
 }
-
-const members = await interaction.guild.members.fetch();
-
-for (const [id, m] of members) {
-  users[id] ??= {
-    username: m.user.username,
-    name: ""
-  };
-}
-
-await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
 
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
