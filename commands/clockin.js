@@ -1,52 +1,36 @@
-import fs from "fs/promises";
-import { MessageFlags } from "discord.js";
-
-const FILE = "./timesheet.json";
-
-async function read() {
-  try {
-    return JSON.parse(await fs.readFile(FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-async function write(data) {
-  await fs.writeFile(FILE, JSON.stringify(data, null, 2));
-}
-
 export default {
   name: "clockin",
 
   async execute(interaction) {
-    if (!interaction.inGuild()) {
-      return interaction.editReply({
-        content: "❌ This command can only be used in a server.",
-        flags: MessageFlags.Ephemeral
-      });
+    await interaction.deferReply(); // ✅ REQUIRED
+
+    const member = interaction.member;
+
+    if (!member.voice.channelId) {
+      await interaction.editReply("❌ You must be in a voice channel to clock in.");
+      return;
     }
+
+    const fs = await import("fs/promises");
+    const FILE = "./timesheet.json";
+
+    let data = {};
+    try {
+      data = JSON.parse(await fs.readFile(FILE, "utf8"));
+    } catch {}
 
     const uid = interaction.user.id;
-    const data = await read();
-
-    data[uid] ??= {};
+    data[uid] ??= { logs: [] };
 
     if (data[uid].active) {
-      return interaction.editReply({
-        content: "❌ You are already clocked in.",
-        flags: MessageFlags.Ephemeral
-      });
+      await interaction.editReply("❌ You are already clocked in.");
+      return;
     }
 
-    data[uid].active = {
-      time: new Date().toISOString()
-    };
+    data[uid].active = new Date().toISOString();
 
-    await write(data);
+    await fs.writeFile(FILE, JSON.stringify(data, null, 2));
 
-    return interaction.editReply({
-      content: "🟢 **CLOCKED IN**",
-      flags: MessageFlags.Ephemeral
-    });
+    await interaction.editReply("🟢 CLOCKED IN");
   }
 };
