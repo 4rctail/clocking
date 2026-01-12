@@ -2,6 +2,10 @@ import { Client, GatewayIntentBits } from "discord.js";
 import fs from "fs/promises";
 import fetch from "node-fetch";
 import { startKeepAlive } from "./keepAlive.js";
+import { execSync } from "child_process";
+
+
+
 
 // =======================
 // CONFIG
@@ -34,7 +38,13 @@ try {
   users = {};
 }
 
-
+function getCommitId() {
+  try {
+    return execSync("git rev-parse --short HEAD").toString().trim();
+  } catch {
+    return "unknown";
+  }
+}
 
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
@@ -83,13 +93,19 @@ function parseDate(str, end = false) {
 }
 
 function getHardName(userId, interaction = null) {
+  // ABSOLUTE SAFETY NET
+  if (!userId) {
+    console.error("❌ getHardName called with undefined userId");
+    return "Unknown User";
+  }
+
   try {
-    // 1️⃣ users.json override
+    // 1️⃣ users.json custom name
     if (users?.[userId]?.name?.trim()) {
       return users[userId].name;
     }
 
-    // 2️⃣ Guild nickname
+    // 2️⃣ Cached guild member
     const member =
       interaction?.guild?.members?.cache?.get(userId);
 
@@ -97,15 +113,22 @@ function getHardName(userId, interaction = null) {
       return member.nickname;
     }
 
-    // 3️⃣ Discord username
     if (member?.user?.username) {
       return member.user.username;
     }
 
-    // 4️⃣ users.json username
+    // 3️⃣ Stored username
     if (users?.[userId]?.username) {
       return users[userId].username;
     }
+
+    throw new Error("HardName resolution failed");
+  } catch (err) {
+    console.error(`❌ HardName error for user ${userId}:`, err.message);
+    return `Unknown (${userId})`;
+  }
+}
+
 
     // ❌ Nothing worked
     throw new Error("HardName resolution failed");
@@ -586,6 +609,7 @@ client.on("interactionCreate", async interaction => {
 client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 
+  const commitId = getCommitId();
   const guild = client.guilds.cache.first();
   if (!guild) {
     console.warn("⚠ No guild found");
@@ -595,18 +619,20 @@ client.once("ready", async () => {
   const members = await guild.members.fetch();
 
   for (const [id, m] of members) {
-    users[id] ??= {
-      username: m.user.username,
-      name: ""
-    };
+    users[id] ??= {};
+
+    users[id].username = m.user.username;
+    users[id].lastSeen = new Date().toISOString();
+    users[id].commit = commitId;
+
+    // preserve hardcoded name if exists
+    users[id].name ??= "";
   }
 
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
-  console.log("✅ users.json synced");
-});
+  await fs.writeFile(
+    USERS_FILE,
+    JSON.stringify(users, null, 2)
+  );
 
-(async () => {
-  startKeepAlive();
-  await loadFromGitHub();
-  await client.login(process.env.DISCORD_TOKEN);
-})();
+  console.log("✅ users.json synced with commit:", commitId);
+});
