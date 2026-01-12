@@ -1,23 +1,24 @@
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, PermissionsBitField } from "discord.js";
 import fs from "fs/promises";
 import fetch from "node-fetch";
 import { startKeepAlive } from "./keepAlive.js";
 
 // =======================
-// CONFIG
+// FILES
 // =======================
-const DATA_FILE = "./timesheet.json";
+const ACTIVE_FILE = "./timesheet.json";
 const HISTORY_FILE = "./timesheetHistory.json";
 
+// =======================
+// GITHUB
+// =======================
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
 const GIT_BRANCH = process.env.GIT_BRANCH || "main";
 
-const TIMEZONE = "Asia/Manila";
-
 // =======================
-// DISCORD CLIENT
+// CLIENT
 // =======================
 const client = new Client({
   intents: [
@@ -27,212 +28,216 @@ const client = new Client({
 });
 
 // =======================
-// MEMORY
+// FILE HELPERS
 // =======================
-let timesheet = {};
-let history = {};
-let gitTimer = null;
+async function readJSON(file) {
+  try {
+    return JSON.parse(await fs.readFile(file, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function writeJSON(file, data) {
+  await fs.writeFile(file, JSON.stringify(data, null, 2));
+}
 
 // =======================
 // TIME HELPERS
 // =======================
-const nowISO = () => new Date().toISOString();
-
-const diffHours = (s, e) =>
-  ((new Date(e) - new Date(s)) / 3600000).toFixed(2);
-
-const formatDate = iso => new Date(iso).toLocaleString();
-
-function elapsed(startISO) {
-  const ms = Date.now() - new Date(startISO);
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  return `${h}h ${m}m`;
-}
-
-// =======================
-// DATE PARSER (MM/DD/YYYY)
-// =======================
-function parseDate(str, endOfDay = false) {
+function parseDate(str) {
   const [m, d, y] = str.split("/").map(Number);
-  if (!m || !d || !y) return null;
+  return new Date(y, m - 1, d);
+}
 
-  const date = new Date(Date.UTC(y, m - 1, d));
-  if (endOfDay) date.setUTCHours(23, 59, 59, 999);
-  return date;
+function diffHours(a, b) {
+  return ((new Date(b) - new Date(a)) / 36e5).toFixed(2);
 }
 
 // =======================
-// GITHUB LOAD
+// GITHUB SYNC
 // =======================
-async function loadGitFile(path, localFile, target) {
-  const url = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/${path}?ref=${GIT_BRANCH}`;
+async function syncFile(file) {
+  if (!GIT_TOKEN) return;
 
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${GIT_TOKEN}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "clocking-bot",
-    },
-  });
+  const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/${file}`;
+  const content = Buffer.from(await fs.readFile(file)).toString("base64");
 
-  if (!res.ok) return {};
-
-  const json = await res.json();
-  const decoded = Buffer.from(json.content, "base64").toString("utf8");
-  await fs.writeFile(localFile, decoded);
-  return JSON.parse(decoded);
-}
-
-// =======================
-// GITHUB COMMIT
-// =======================
-async function commitFile(path, content, message) {
-  const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/${path}`;
   let sha = null;
-
-  const get = await fetch(api, {
-    headers: {
-      Authorization: `Bearer ${GIT_TOKEN}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "clocking-bot",
-    },
+  const res = await fetch(api, {
+    headers: { Authorization: `Bearer ${GIT_TOKEN}` },
   });
 
-  if (get.ok) sha = (await get.json()).sha;
+  if (res.ok) sha = (await res.json()).sha;
 
   await fetch(api, {
     method: "PUT",
     headers: {
       Authorization: `Bearer ${GIT_TOKEN}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "clocking-bot",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      message,
-      content: Buffer.from(JSON.stringify(content, null, 2)).toString("base64"),
+      message: `Update ${file}`,
+      content,
       sha,
       branch: GIT_BRANCH,
     }),
   });
-}
 
-function queueCommit() {
-  if (gitTimer) return;
-  gitTimer = setTimeout(async () => {
-    gitTimer = null;
-    await commitFile("timesheet.json", timesheet, "Update timesheet");
-    await commitFile("timesheetHistory.json", history, "Update timesheet history");
-    console.log("✅ GitHub committed");
-  }, 3000);
+  console.log(`✅ Synced ${file}`);
 }
 
 // =======================
-// 15-DAY ARCHIVE CHECK
+// VOICE CHECK
 // =======================
-setInterval(async () => {
-  const now = new Date(
-    new Date().toLocaleString("en-US", { timeZone: TIMEZONE })
-  );
-
-  if (now.getHours() !== 12 || now.getMinutes() !== 30) return;
-  if (now.getDate() % 15 !== 0) return;
-
-  console.log("📦 Archiving timesheet");
-
-  for (const uid in timesheet) {
-    history[uid] ??= [];
-    if (timesheet[uid].logs)
-      history[uid].push(...timesheet[uid].logs);
-  }
-
-  timesheet = {};
-  await fs.writeFile(DATA_FILE, JSON.stringify(timesheet, null, 2));
-  await fs.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2));
-  queueCommit();
-}, 60_000);
+function inVoice(member) {
+  return member?.voice?.channelId;
+}
 
 // =======================
-// SLASH COMMANDS
+// COMMAND HANDLER
 // =======================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  await interaction.deferReply();
 
-  const member = interaction.options.getMember("user") || interaction.member;
-  const userId = member.id;
+  const member = interaction.member;
+  const userId = interaction.user.id;
 
-  // ✅ CORRECT NAME RESOLUTION
-  const displayName = member.displayName;
+  const data = await readJSON(ACTIVE_FILE);
+  const history = await readJSON(HISTORY_FILE);
 
-  timesheet[userId] ??= { logs: [] };
+  data[userId] ??= { logs: [] };
 
-  // -------- STATUS --------
-  if (interaction.commandName === "status") {
-    if (timesheet[userId].active) {
-      return interaction.editReply(
-        `🟢 CLOCKED IN\n👤 ${displayName}\n⏱ Started: ${formatDate(timesheet[userId].active)}\n⌛ Elapsed: ${elapsed(timesheet[userId].active)}`
-      );
+  // =======================
+  // CLOCK IN
+  // =======================
+  if (interaction.commandName === "clockin") {
+    if (!inVoice(member)) {
+      await interaction.reply("❌ Join a voice channel before clocking in.");
+      return;
     }
 
-    const total = timesheet[userId].logs.reduce(
-      (t, l) => t + parseFloat(l.hours),
-      0
-    );
+    if (data[userId].active) {
+      await interaction.reply("❌ Already clocked in.");
+      return;
+    }
 
-    return interaction.editReply(
-      `⚪ CLOCKED OUT\n👤 ${displayName}\n⏱ Total hours: ${total.toFixed(2)}h`
-    );
+    data[userId].active = new Date().toISOString();
+    await writeJSON(ACTIVE_FILE, data);
+    await syncFile("timesheet.json");
+
+    await interaction.reply("🟢 CLOCKED IN");
+    return;
   }
 
-  // -------- TIMESHEET RANGE --------
+  // =======================
+  // CLOCK OUT
+  // =======================
+  if (interaction.commandName === "clockout") {
+    if (!data[userId].active) {
+      await interaction.reply("❌ Not clocked in.");
+      return;
+    }
+
+    const start = data[userId].active;
+    const end = new Date().toISOString();
+
+    data[userId].logs.push({
+      start,
+      end,
+      hours: diffHours(start, end),
+    });
+
+    delete data[userId].active;
+
+    await writeJSON(ACTIVE_FILE, data);
+    await syncFile("timesheet.json");
+
+    await interaction.reply("🔴 CLOCKED OUT");
+    return;
+  }
+
+  // =======================
+  // TIMESHEET
+  // =======================
   if (interaction.commandName === "timesheet") {
+    const sub = interaction.options.getSubcommand(false);
+
+    // ---------- RESET ----------
+    if (sub === "reset") {
+      const isManager = member.roles.cache.some(r => r.name === "Manager");
+      if (!isManager) {
+        await interaction.reply("❌ Only @Manager can reset timesheets.");
+        return;
+      }
+
+      const startStr = interaction.options.getString("start");
+      const endStr = interaction.options.getString("end");
+
+      const startDate = startStr ? parseDate(startStr) : null;
+      const endDate = endStr ? parseDate(endStr) : null;
+
+      for (const uid in data) {
+        const logs = data[uid].logs || [];
+        const keep = [];
+        const move = [];
+
+        logs.forEach(l => {
+          const d = new Date(l.start);
+          const inRange =
+            (!startDate || d >= startDate) &&
+            (!endDate || d <= endDate);
+
+          (inRange ? move : keep).push(l);
+        });
+
+        if (move.length) {
+          history[uid] ??= [];
+          history[uid].push(...move);
+        }
+
+        data[uid].logs = keep;
+      }
+
+      await writeJSON(HISTORY_FILE, history);
+      await writeJSON(ACTIVE_FILE, data);
+
+      await syncFile("timesheetHistory.json");
+      await syncFile("timesheet.json");
+
+      await interaction.reply("♻️ Timesheet reset completed.");
+      return;
+    }
+
+    // ---------- VIEW ----------
+    const logs = data[userId].logs || [];
     const startStr = interaction.options.getString("start");
     const endStr = interaction.options.getString("end");
 
-    if (startStr && endStr) {
-      const start = parseDate(startStr);
-      const end = parseDate(endStr, true);
-      if (!start || !end)
-        return interaction.editReply("❌ Invalid date format.");
-
-      const total = timesheet[userId].logs
-        .filter(l => {
-          const d = new Date(l.start);
-          return d >= start && d <= end;
-        })
-        .reduce((t, l) => t + parseFloat(l.hours), 0);
-
-      return interaction.editReply(
-        `📊 Timesheet Total\n👤 ${displayName}\n📅 ${startStr} → ${endStr}\n⏱ ${total.toFixed(2)}h`
-      );
-    }
-
-    // Default full list
-    if (!timesheet[userId].logs.length)
-      return interaction.editReply("📭 No records found.");
+    let startDate = startStr ? parseDate(startStr) : null;
+    let endDate = endStr ? parseDate(endStr) : null;
 
     let total = 0;
-    let msg = `🧾 Timesheet — ${displayName}\n`;
-
-    timesheet[userId].logs.forEach((l, i) => {
-      total += parseFloat(l.hours);
-      msg += `${i + 1}. ${formatDate(l.start)} → ${l.hours}h\n`;
+    logs.forEach(l => {
+      const d = new Date(l.start);
+      if (
+        (!startDate || d >= startDate) &&
+        (!endDate || d <= endDate)
+      ) {
+        total += parseFloat(l.hours);
+      }
     });
 
-    msg += `\n⏱ Total: ${total.toFixed(2)}h`;
-    return interaction.editReply(msg);
+    await interaction.reply(`⏱ Total hours: **${total.toFixed(2)}h**`);
+    return;
   }
 });
 
 // =======================
-// STARTUP
+// START
 // =======================
 (async () => {
   startKeepAlive();
-  timesheet = await loadGitFile("timesheet.json", DATA_FILE, timesheet);
-  history = await loadGitFile("timesheetHistory.json", HISTORY_FILE, history);
   await client.login(process.env.DISCORD_BOT_TOKEN);
   console.log(`✅ Logged in as ${client.user.tag}`);
 })();
