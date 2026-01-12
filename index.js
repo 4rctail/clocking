@@ -14,9 +14,7 @@ const __dirname = path.dirname(__filename);
 // CLIENT
 // =======================
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds
-  ]
+  intents: [GatewayIntentBits.Guilds]
 });
 
 client.commands = new Collection();
@@ -43,20 +41,25 @@ client.on("interactionCreate", async interaction => {
   if (!command) return;
 
   try {
-    // 🔒 ALWAYS defer ONCE
-    await interaction.deferReply({ ephemeral: false });
+    // ✅ ACK ASAP — prevents cold start expiry
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply();
+    }
 
-    // 🔒 Commands must ONLY editReply
     await command.execute(interaction);
 
   } catch (err) {
     console.error("❌ Command Error");
-    console.error("Guild:", interaction.guild?.id, interaction.guild?.name);
     console.error("Command:", interaction.commandName);
     console.error(err);
 
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply("❌ An internal error occurred.");
+    // 🔒 Interaction may already be invalid — guard it
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply("❌ An internal error occurred.");
+      }
+    } catch {
+      // interaction is gone — nothing we can do
     }
   }
 });
