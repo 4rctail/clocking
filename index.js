@@ -24,9 +24,10 @@ const client = new Client({
 });
 
 // =======================
-// VOICE TIMERS
+// IN-MEMORY CACHE (CRITICAL)
 // =======================
-const voiceTimers = new Map();
+let timesheetCache = {};
+let gitSyncTimer = null;
 
 // =======================
 // TIME HELPERS
@@ -37,18 +38,14 @@ const diffHours = (s, e) =>
 
 const formatDate = iso => new Date(iso).toLocaleString();
 
-function elapsed(startISO) {
-  const ms = Date.now() - new Date(startISO);
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  return `${h}h ${m}m`;
-}
-
 // =======================
-// GITHUB LOAD (ON STARTUP)
+// GITHUB LOAD (SAFE)
 // =======================
 async function loadFromGitHub() {
-  if (!GIT_TOKEN) return {};
+  if (!GIT_TOKEN) {
+    timesheetCache = {};
+    return;
+  }
 
   const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/timesheet.json?ref=${GIT_BRANCH}`;
 
@@ -57,44 +54,53 @@ async function loadFromGitHub() {
       headers: { Authorization: `Bearer ${GIT_TOKEN}` },
     });
 
-    if (!res.ok) return {};
+    if (!res.ok) {
+      console.warn("⚠ No timesheet on GitHub yet, creating new one");
+      timesheetCache = {};
+      await persist();
+      return;
+    }
 
     const json = await res.json();
     const decoded = Buffer.from(json.content, "base64").toString("utf8");
 
+    timesheetCache = JSON.parse(decoded);
     await fs.writeFile(DATA_FILE, decoded);
+
     console.log("✅ Loaded timesheet from GitHub");
-    return JSON.parse(decoded);
-  } catch (e) {
-    console.error("❌ Failed to load GitHub timesheet", e);
-    return {};
+  } catch (err) {
+    console.error("❌ GitHub load failed, using local cache", err);
+    timesheetCache = {};
   }
 }
 
 // =======================
-// FILE HELPERS
+// SAVE (DEBOUNCED GITHUB SYNC)
 // =======================
-async function loadData() {
-  try {
-    return JSON.parse(await fs.readFile(DATA_FILE, "utf8"));
-  } catch {
-    return {};
-  }
+async function persist() {
+  await fs.writeFile(DATA_FILE, JSON.stringify(timesheetCache, null, 2));
+  queueGitSync();
 }
 
-async function saveData(data) {
-  await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
-  await syncGitHub();
+function queueGitSync() {
+  if (gitSyncTimer) return;
+
+  gitSyncTimer = setTimeout(async () => {
+    gitSyncTimer = null;
+    await syncGitHub();
+  }, 3000); // debounce
 }
 
 // =======================
-// GITHUB SYNC (SAVE)
+// GITHUB SYNC (FAST & SAFE)
 // =======================
 async function syncGitHub() {
   if (!GIT_TOKEN) return;
 
   const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/timesheet.json`;
-  const content = Buffer.from(await fs.readFile(DATA_FILE)).toString("base64");
+  const content = Buffer.from(
+    JSON.stringify(timesheetCache, null, 2)
+  ).toString("base64");
 
   let sha = null;
   const get = await fetch(api, {
@@ -123,137 +129,87 @@ async function syncGitHub() {
 }
 
 // =======================
-// VOICE ENFORCEMENT
-// =======================
-client.on("voiceStateUpdate", async (oldState, newState) => {
-  const userId = newState.id;
-  if (oldState.channelId && !newState.channelId) {
-    const data = await loadData();
-    if (!data[userId]?.active) return;
-
-    clearVoiceTimers(userId);
-
-    const channel =
-      newState.guild.systemChannel ??
-      newState.guild.channels.cache.find(
-        c => c.isTextBased()
-      );
-
-    if (!channel) return;
-
-    const warnTimeout = setTimeout(() => {
-      channel.send(
-        `⚠️ <@${userId}> you left voice chat while **CLOCKED IN**.\nYou have **2 minutes 30 seconds** to rejoin.`
-      );
-    }, 150_000);
-
-    const forceTimeout = setTimeout(async () => {
-      const latest = await loadData();
-      if (!latest[userId]?.active) return;
-
-      const start = latest[userId].active;
-      const end = nowISO();
-
-      latest[userId].logs.push({
-        start,
-        end,
-        hours: diffHours(start, end),
-      });
-
-      delete latest[userId].active;
-      await saveData(latest);
-
-      channel.send(
-        `⛔ <@${userId}> was **FORCIBLY CLOCKED OUT**`
-      );
-
-      clearVoiceTimers(userId);
-    }, 300_000);
-
-    voiceTimers.set(userId, { warnTimeout, forceTimeout });
-  }
-
-  if (!oldState.channelId && newState.channelId) {
-    clearVoiceTimers(userId);
-  }
-});
-
-function clearVoiceTimers(userId) {
-  const t = voiceTimers.get(userId);
-  if (!t) return;
-  clearTimeout(t.warnTimeout);
-  clearTimeout(t.forceTimeout);
-  voiceTimers.delete(userId);
-}
-
-// =======================
 // SLASH COMMANDS
 // =======================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
   await interaction.deferReply();
 
-  const data = await loadData();
   const member = interaction.options.getMember("user") || interaction.member;
   const userId = member.id;
-
-  data[userId] ??= { logs: [] };
-
   const displayName = member.nickname || member.user.username;
 
+  timesheetCache[userId] ??= { logs: [] };
+
+  // -------- CLOCK IN --------
   if (interaction.commandName === "clockin") {
     if (!member.voice.channelId)
       return interaction.editReply("❌ Join voice first.");
 
-    if (data[userId].active)
+    if (timesheetCache[userId].active)
       return interaction.editReply("❌ Already clocked in.");
 
-    data[userId].active = nowISO();
-    await saveData(data);
+    timesheetCache[userId].active = nowISO();
+    await persist();
 
     return interaction.editReply("🟢 Clocked IN");
   }
 
+  // -------- CLOCK OUT --------
   if (interaction.commandName === "clockout") {
-    if (!data[userId].active)
+    const active = timesheetCache[userId].active;
+    if (!active)
       return interaction.editReply("❌ Not clocked in.");
 
-    const start = data[userId].active;
     const end = nowISO();
-
-    data[userId].logs.push({
-      start,
+    timesheetCache[userId].logs.push({
+      start: active,
       end,
-      hours: diffHours(start, end),
+      hours: diffHours(active, end),
     });
 
-    delete data[userId].active;
-    await saveData(data);
-    clearVoiceTimers(userId);
+    delete timesheetCache[userId].active;
+    await persist();
 
-    return interaction.editReply(`🔴 Clocked OUT — ${diffHours(start, end)}h`);
+    return interaction.editReply(
+      `🔴 Clocked OUT — ${diffHours(active, end)}h`
+    );
   }
 
+  // -------- STATUS --------
   if (interaction.commandName === "status") {
-    if (data[userId].active) {
+    if (timesheetCache[userId].active) {
       return interaction.editReply(
-        `🟢 CLOCKED IN\n` +
-        `👤 ${displayName}\n` +
-        `⏱ Started: ${formatDate(data[userId].active)}\n` +
-        `⌛ Elapsed: ${elapsed(data[userId].active)}`
+        `🟢 CLOCKED IN\n👤 ${displayName}`
       );
     }
 
-    const total = data[userId].logs.reduce(
+    const total = timesheetCache[userId].logs.reduce(
       (t, l) => t + parseFloat(l.hours),
       0
     );
 
     return interaction.editReply(
-      `⚪ CLOCKED OUT\n` +
-      `👤 ${displayName}\n` +
-      `⏱ Total hours: ${total.toFixed(2)}h`
+      `⚪ CLOCKED OUT\n👤 ${displayName}\n⏱ Total hours: ${total.toFixed(2)}h`
     );
+  }
+
+  // -------- TIMESHEET (FIXED) --------
+  if (interaction.commandName === "timesheet") {
+    const logs = timesheetCache[userId].logs;
+    if (!logs.length)
+      return interaction.editReply("📭 No records found.");
+
+    let msg = `🧾 Timesheet — ${displayName}\n`;
+    let total = 0;
+
+    logs.forEach((l, i) => {
+      total += parseFloat(l.hours);
+      msg += `${i + 1}. ${formatDate(l.start)} → ${l.hours}h\n`;
+    });
+
+    msg += `\n⏱ Total: ${total.toFixed(2)}h`;
+    return interaction.editReply(msg);
   }
 });
 
