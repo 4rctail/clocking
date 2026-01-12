@@ -58,7 +58,8 @@ let gitCommitTimer = null;
 const nowISO = () => new Date().toISOString();
 
 const diffHours = (s, e) =>
-  ((new Date(e) - new Date(s)) / 3600000).toFixed(2);
+  (new Date(e) - new Date(s)) / 3600000;
+
 
 const formatDate = iso => new Date(iso).toLocaleString();
 
@@ -247,10 +248,12 @@ client.on("interactionCreate", async interaction => {
 
     delete timesheet[userId].active;
     await persist();
+    
+      return interaction.editReply(
+        `🔴 Clocked OUT — ${diffHours(start, end).toFixed(2)}h`
+      );
+      
 
-    return interaction.editReply(
-      `🔴 Clocked OUT — ${diffHours(start, end)}h`
-    );
   }
 
   // -------- STATUS (FIXED) --------
@@ -265,9 +268,10 @@ client.on("interactionCreate", async interaction => {
     }
 
     const total = timesheet[userId].logs.reduce(
-      (t, l) => t + parseFloat(l.hours),
+      (t, l) => t + l.hours,
       0
     );
+
 
     return interaction.editReply(
       `⚪ CLOCKED OUT\n` +
@@ -303,7 +307,7 @@ client.on("interactionCreate", async interaction => {
     return interaction.editReply(msg);
   }
   
-
+});
 // =======================
 // STARTUP
 // =======================
