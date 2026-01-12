@@ -17,18 +17,10 @@ const __dirname = path.dirname(__filename);
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildPresences,
     GatewayIntentBits.GuildVoiceStates
   ]
 });
 
-
-
-
-// =======================
-// COMMAND LOADER
-// =======================
 client.commands = new Collection();
 
 const commandsPath = path.join(__dirname, "commands");
