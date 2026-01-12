@@ -18,7 +18,7 @@ const GIT_REPO   = process.env.GIT_REPO;
 const GIT_BRANCH = process.env.GIT_BRANCH || "main";
 
 // =======================
-// DISCORD CLIENT
+// CLIENT
 // =======================
 const client = new Client({
   intents: [
@@ -28,23 +28,17 @@ const client = new Client({
 });
 
 // =======================
-// FILE HELPERS
+// HELPERS
 // =======================
 async function readJSON(file) {
-  try {
-    return JSON.parse(await fs.readFile(file, "utf8"));
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(await fs.readFile(file, "utf8")); }
+  catch { return {}; }
 }
 
 async function writeJSON(file, data) {
   await fs.writeFile(file, JSON.stringify(data, null, 2));
 }
 
-// =======================
-// TIME HELPERS
-// =======================
 function parseDate(str, end = false) {
   const [m, d, y] = str.split("/").map(Number);
   if (!m || !d || !y) return null;
@@ -53,13 +47,10 @@ function parseDate(str, end = false) {
   return date;
 }
 
-function diffHours(start, end) {
-  return ((new Date(end) - new Date(start)) / 36e5).toFixed(2);
+function diffHours(a, b) {
+  return ((new Date(b) - new Date(a)) / 36e5).toFixed(2);
 }
 
-// =======================
-// GITHUB SYNC
-// =======================
 async function syncFile(file) {
   if (!GIT_TOKEN) return;
 
@@ -67,11 +58,11 @@ async function syncFile(file) {
   const content = Buffer.from(await fs.readFile(file)).toString("base64");
 
   let sha = null;
-  const get = await fetch(api, {
+  const res = await fetch(api, {
     headers: { Authorization: `Bearer ${GIT_TOKEN}` },
   });
 
-  if (get.ok) sha = (await get.json()).sha;
+  if (res.ok) sha = (await res.json()).sha;
 
   await fetch(api, {
     method: "PUT",
@@ -86,8 +77,6 @@ async function syncFile(file) {
       branch: GIT_BRANCH,
     }),
   });
-
-  console.log(`✅ Synced ${file}`);
 }
 
 // =======================
@@ -97,26 +86,23 @@ client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   const member = interaction.member;
-  const userId = interaction.user.id;
-
   const timesheet = await readJSON(ACTIVE_FILE);
   const history   = await readJSON(HISTORY_FILE);
-
-  timesheet[userId] ??= { logs: [] };
-
-  const displayName = member.displayName;
 
   // =======================
   // CLOCK IN
   // =======================
   if (interaction.commandName === "clockin") {
-    if (!member.voice?.channelId)
-      return interaction.reply("❌ Join a voice channel first.");
+    const uid = interaction.user.id;
+    timesheet[uid] ??= { logs: [] };
 
-    if (timesheet[userId].active)
+    if (!member.voice?.channelId)
+      return interaction.reply("❌ Join voice first.");
+
+    if (timesheet[uid].active)
       return interaction.reply("❌ Already clocked in.");
 
-    timesheet[userId].active = new Date().toISOString();
+    timesheet[uid].active = new Date().toISOString();
     await writeJSON(ACTIVE_FILE, timesheet);
     await syncFile("timesheet.json");
 
@@ -127,19 +113,20 @@ client.on("interactionCreate", async interaction => {
   // CLOCK OUT
   // =======================
   if (interaction.commandName === "clockout") {
-    const start = timesheet[userId].active;
-    if (!start)
+    const uid = interaction.user.id;
+    const data = timesheet[uid];
+
+    if (!data?.active)
       return interaction.reply("❌ Not clocked in.");
 
     const end = new Date().toISOString();
-
-    timesheet[userId].logs.push({
-      start,
+    data.logs.push({
+      start: data.active,
       end,
-      hours: diffHours(start, end),
+      hours: diffHours(data.active, end),
     });
 
-    delete timesheet[userId].active;
+    delete data.active;
 
     await writeJSON(ACTIVE_FILE, timesheet);
     await syncFile("timesheet.json");
@@ -155,6 +142,9 @@ client.on("interactionCreate", async interaction => {
 
     // ---------- VIEW ----------
     if (sub === "view") {
+      const user = interaction.options.getUser("user") || interaction.user;
+      const uid = user.id;
+
       const startStr = interaction.options.getString("start");
       const endStr   = interaction.options.getString("end");
 
@@ -162,22 +152,21 @@ client.on("interactionCreate", async interaction => {
       const end   = endStr ? parseDate(endStr, true) : null;
 
       let total = 0;
-      for (const l of timesheet[userId].logs) {
+      for (const l of timesheet[uid]?.logs || []) {
         const d = new Date(l.start);
         if ((!start || d >= start) && (!end || d <= end))
           total += parseFloat(l.hours);
       }
 
       return interaction.reply(
-        `📊 **Timesheet Total**\n👤 ${displayName}\n⏱ **${total.toFixed(2)}h**`
+        `👤 **${interaction.guild.members.cache.get(uid)?.displayName || user.username}**\n⏱ **${total.toFixed(2)}h**`
       );
     }
 
-    // ---------- RESET ----------
+    // ---------- RESET (ALL USERS) ----------
     if (sub === "reset") {
-      const isManager = member.roles.cache.some(r => r.name === "Manager");
-      if (!isManager)
-        return interaction.reply("❌ Only **@Manager** can reset timesheets.");
+      if (!member.roles.cache.some(r => r.name === "Manager"))
+        return interaction.reply("❌ Manager only.");
 
       const startStr = interaction.options.getString("start");
       const endStr   = interaction.options.getString("end");
@@ -213,13 +202,33 @@ client.on("interactionCreate", async interaction => {
       await syncFile("timesheet.json");
       await syncFile("timesheetHistory.json");
 
-      return interaction.reply("♻️ Timesheet reset completed.");
+      return interaction.reply("♻️ Timesheet reset completed (ALL USERS).");
     }
+  }
+
+  // =======================
+  // TOTALHR
+  // =======================
+  if (interaction.commandName === "totalhr") {
+    let msg = "";
+    for (const uid in timesheet) {
+      const total = (timesheet[uid].logs || [])
+        .reduce((t, l) => t + parseFloat(l.hours), 0);
+
+      if (!total) continue;
+
+      const member = interaction.guild.members.cache.get(uid);
+      const name = member?.displayName || uid;
+
+      msg += `${name} = ${total.toFixed(1)} hours\n`;
+    }
+
+    return interaction.reply(msg || "📭 No data found.");
   }
 });
 
 // =======================
-// STARTUP
+// START
 // =======================
 (async () => {
   startKeepAlive();
