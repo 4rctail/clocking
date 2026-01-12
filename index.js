@@ -244,57 +244,45 @@ client.on("interactionCreate", async interaction => {
   timesheet[userId] ??= { logs: [] };
   
     // -------- TOTAL HOURS (ALL USERS) --------
+    // -------- TOTAL HOURS (ALL USERS) --------
     if (interaction.commandName === "totalhr") {
-      const rows = [];
+      let lines = [];
     
       for (const [uid, u] of Object.entries(timesheet)) {
         if (!u.logs?.length) continue;
     
         let total = 0;
         for (const l of u.logs) {
-          const hours =
-            (new Date(l.end) - new Date(l.start)) / 3600000;
-          total += hours;
+          total += l.hours || 0;
         }
     
-        // 🔴 SKIP USERS WITH TRUE ZERO
+        // keep decimals like 0.01
+        total = Math.round(total * 100) / 100;
+    
+        // ❌ skip users with TOTAL ZERO
         if (total <= 0) continue;
     
-        // KEEP DECIMALS (0.01, 0.25, etc)
-        const safeTotal = Math.round(total * 100) / 100;
-    
-        let name = u.name || uid;
+        let name = u.name || "Unknown";
     
         try {
           const m = await interaction.guild.members.fetch(uid);
-          name =
-            m.displayName ||
-            m.user.globalName ||
-            m.user.username;
-        } catch {}
+          name = m.nickname || m.displayName;
+        } catch {
+          // fallback to stored name only (never username)
+          name = u.name || "Unknown";
+        }
     
-        rows.push({ name, hours: safeTotal });
+        lines.push(`${name} — ${total.toFixed(2)}h`);
       }
     
-      if (!rows.length)
-        return interaction.editReply("📭 No recorded hours.");
+      if (!lines.length)
+        return interaction.editReply("📭 No tracked hours.");
     
-      // SORT HIGHEST → LOWEST
-      rows.sort((a, b) => b.hours - a.hours);
-    
-      const description = rows
-        .map(r => `**${r.name}** — ${r.hours}h`)
-        .join("\n");
-    
-      const embed = {
-        title: "📊 Total Hours (All Users)",
-        description,
-        color: 0x2ecc71,
-        timestamp: new Date().toISOString(),
-      };
-    
-      return interaction.editReply({ embeds: [embed] });
+      return interaction.editReply(
+        `📊 **Total Hours (All Users)**\n` + lines.join("\n")
+      );
     }
+
 
 
   // -------- CLOCK IN --------
