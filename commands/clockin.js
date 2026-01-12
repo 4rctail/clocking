@@ -14,39 +14,50 @@ async function write(data) {
   await fs.writeFile(FILE, JSON.stringify(data, null, 2));
 }
 
-// ✅ CORRECT VOICE CHECK (NO CACHE RELIANCE)
-async function getVoiceChannel(interaction) {
-  if (!interaction.inGuild()) return null;
-
-  const member = await interaction.guild.members.fetch(interaction.user.id);
-  return member.voice.channel ?? null;
-}
-
 export default {
   name: "clockin",
 
   async execute(interaction) {
-    const uid = interaction.user.id;
-
-    const voiceChannel = await getVoiceChannel(interaction);
-    if (!voiceChannel) {
-      return interaction.editReply(
-        "❌ You must be **inside a server voice channel** to clock in."
-      );
+    // MUST be in a guild
+    if (!interaction.inGuild()) {
+      return interaction.reply({
+        content: "❌ This command can only be used in a server.",
+        ephemeral: true
+      });
     }
 
+    // 🔴 THIS IS THE KEY LINE — DO NOT CHANGE IT
+    const voiceChannel = interaction.member.voice.channel;
+
+    if (!voiceChannel) {
+      return interaction.reply({
+        content: "❌ You must be **in a voice channel** to clock in.",
+        ephemeral: true
+      });
+    }
+
+    const uid = interaction.user.id;
     const data = await read();
-    data[uid] ??= { logs: [] };
+
+    data[uid] ??= {};
 
     if (data[uid].active) {
-      return interaction.editReply("❌ You are already clocked in.");
+      return interaction.reply({
+        content: "❌ You are already clocked in.",
+        ephemeral: true
+      });
     }
 
-    data[uid].active = new Date().toISOString();
+    data[uid].active = {
+      time: new Date().toISOString(),
+      channel: voiceChannel.id
+    };
+
     await write(data);
 
-    return interaction.editReply(
-      `🟢 **CLOCKED IN**\n📢 Voice: **${voiceChannel.name}**`
-    );
+    return interaction.reply({
+      content: `🟢 **CLOCKED IN**\n📢 Voice: **${voiceChannel.name}**`,
+      ephemeral: true
+    });
   }
 };
