@@ -245,8 +245,6 @@ client.on("interactionCreate", async interaction => {
 
   // -------- CLOCK IN --------
   if (interaction.commandName === "clockin") {
-    if (!member.voice.channelId)
-      return interaction.editReply("❌ Join voice first.");
 
     if (timesheet[userId].active)
       return interaction.editReply("❌ Already clocked in.");
