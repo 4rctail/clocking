@@ -1,35 +1,38 @@
+import fs from "fs/promises";
+
+const FILE = "./timesheet.json";
+
+async function read() {
+  try {
+    return JSON.parse(await fs.readFile(FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function write(data) {
+  await fs.writeFile(FILE, JSON.stringify(data, null, 2));
+}
+
 export default {
   name: "clockin",
 
   async execute(interaction) {
-    await interaction.deferReply(); // ✅ REQUIRED
+    // 🔥 MUST be first
+    await interaction.reply("🟢 Clocking in...");
 
-    const member = interaction.member;
-
-    if (!member.voice.channelId) {
-      await interaction.editReply("❌ You must be in a voice channel to clock in.");
-      return;
-    }
-
-    const fs = await import("fs/promises");
-    const FILE = "./timesheet.json";
-
-    let data = {};
-    try {
-      data = JSON.parse(await fs.readFile(FILE, "utf8"));
-    } catch {}
-
+    const data = await read();
     const uid = interaction.user.id;
-    data[uid] ??= { logs: [] };
 
-    if (data[uid].active) {
+    if (data[uid]?.active) {
       await interaction.editReply("❌ You are already clocked in.");
       return;
     }
 
+    data[uid] ??= { logs: [] };
     data[uid].active = new Date().toISOString();
 
-    await fs.writeFile(FILE, JSON.stringify(data, null, 2));
+    await write(data);
 
     await interaction.editReply("🟢 CLOCKED IN");
   }
