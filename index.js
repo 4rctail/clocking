@@ -8,7 +8,6 @@ import { startKeepAlive } from "./keepAlive.js";
 // =======================
 const DATA_FILE = "./timesheet.json";
 
-// GitHub sync (unchanged)
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
@@ -20,14 +19,57 @@ const GIT_BRANCH = process.env.GIT_BRANCH || "main";
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates, // REQUIRED
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
 // =======================
-// IN-MEMORY VOICE TIMERS
+// VOICE TIMERS
 // =======================
-const voiceTimers = new Map(); // userId -> { warnTimeout, forceTimeout }
+const voiceTimers = new Map();
+
+// =======================
+// TIME HELPERS
+// =======================
+const nowISO = () => new Date().toISOString();
+const diffHours = (s, e) =>
+  ((new Date(e) - new Date(s)) / 3600000).toFixed(2);
+
+const formatDate = iso => new Date(iso).toLocaleString();
+
+function elapsed(startISO) {
+  const ms = Date.now() - new Date(startISO);
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return `${h}h ${m}m`;
+}
+
+// =======================
+// GITHUB LOAD (ON STARTUP)
+// =======================
+async function loadFromGitHub() {
+  if (!GIT_TOKEN) return {};
+
+  const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/timesheet.json?ref=${GIT_BRANCH}`;
+
+  try {
+    const res = await fetch(api, {
+      headers: { Authorization: `Bearer ${GIT_TOKEN}` },
+    });
+
+    if (!res.ok) return {};
+
+    const json = await res.json();
+    const decoded = Buffer.from(json.content, "base64").toString("utf8");
+
+    await fs.writeFile(DATA_FILE, decoded);
+    console.log("✅ Loaded timesheet from GitHub");
+    return JSON.parse(decoded);
+  } catch (e) {
+    console.error("❌ Failed to load GitHub timesheet", e);
+    return {};
+  }
+}
 
 // =======================
 // FILE HELPERS
@@ -46,29 +88,7 @@ async function saveData(data) {
 }
 
 // =======================
-// TIME HELPERS
-// =======================
-function nowISO() {
-  return new Date().toISOString();
-}
-
-function diffHours(start, end) {
-  return ((new Date(end) - new Date(start)) / 3600000).toFixed(2);
-}
-
-function formatDate(iso) {
-  return new Date(iso).toLocaleString();
-}
-
-function elapsed(startISO) {
-  const ms = Date.now() - new Date(startISO).getTime();
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  return `${h}h ${m}m`;
-}
-
-// =======================
-// GITHUB SYNC
+// GITHUB SYNC (SAVE)
 // =======================
 async function syncGitHub() {
   if (!GIT_TOKEN) return;
@@ -82,8 +102,7 @@ async function syncGitHub() {
   });
 
   if (get.ok) {
-    const json = await get.json();
-    sha = json.sha;
+    sha = (await get.json()).sha;
   }
 
   await fetch(api, {
@@ -104,44 +123,36 @@ async function syncGitHub() {
 }
 
 // =======================
-// VOICE STATE ENFORCEMENT
+// VOICE ENFORCEMENT
 // =======================
 client.on("voiceStateUpdate", async (oldState, newState) => {
   const userId = newState.id;
-  const guild = newState.guild;
-
-  // USER LEFT VOICE
   if (oldState.channelId && !newState.channelId) {
     const data = await loadData();
     if (!data[userId]?.active) return;
 
-    // Cancel existing timers
     clearVoiceTimers(userId);
 
-    const textChannel =
-      guild.systemChannel ||
-      guild.channels.cache.find(
-        c =>
-          c.isTextBased() &&
-          c.permissionsFor(guild.members.me)?.has("SendMessages")
+    const channel =
+      newState.guild.systemChannel ??
+      newState.guild.channels.cache.find(
+        c => c.isTextBased()
       );
 
-    if (!textChannel) return;
+    if (!channel) return;
 
-    // 2.5 MIN WARNING
-    const warnTimeout = setTimeout(async () => {
-      await textChannel.send(
-        `⚠️ <@${userId}> you left voice chat while **CLOCKED IN**.\nYou have **2 minutes 30 seconds** to rejoin or you will be clocked out.`
+    const warnTimeout = setTimeout(() => {
+      channel.send(
+        `⚠️ <@${userId}> you left voice chat while **CLOCKED IN**.\nYou have **2 minutes 30 seconds** to rejoin.`
       );
     }, 150_000);
 
-    // 5 MIN FORCE CLOCK-OUT
     const forceTimeout = setTimeout(async () => {
       const latest = await loadData();
       if (!latest[userId]?.active) return;
 
-      const end = nowISO();
       const start = latest[userId].active;
+      const end = nowISO();
 
       latest[userId].logs.push({
         start,
@@ -152,8 +163,8 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
       delete latest[userId].active;
       await saveData(latest);
 
-      await textChannel.send(
-        `⛔ <@${userId}> was **FORCIBLY CLOCKED OUT** for being out of voice chat.\n⏱ Session: ${diffHours(start, end)}h`
+      channel.send(
+        `⛔ <@${userId}> was **FORCIBLY CLOCKED OUT**`
       );
 
       clearVoiceTimers(userId);
@@ -162,137 +173,87 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
     voiceTimers.set(userId, { warnTimeout, forceTimeout });
   }
 
-  // USER REJOINED VOICE → CANCEL TIMERS
   if (!oldState.channelId && newState.channelId) {
     clearVoiceTimers(userId);
   }
 });
 
 function clearVoiceTimers(userId) {
-  const timers = voiceTimers.get(userId);
-  if (!timers) return;
-
-  clearTimeout(timers.warnTimeout);
-  clearTimeout(timers.forceTimeout);
+  const t = voiceTimers.get(userId);
+  if (!t) return;
+  clearTimeout(t.warnTimeout);
+  clearTimeout(t.forceTimeout);
   voiceTimers.delete(userId);
 }
 
 // =======================
-// SLASH COMMAND HANDLER
+// SLASH COMMANDS
 // =======================
 client.on("interactionCreate", async interaction => {
-  try {
-    if (!interaction.isChatInputCommand()) return;
+  if (!interaction.isChatInputCommand()) return;
+  await interaction.deferReply();
 
-    await interaction.deferReply(); // PUBLIC
+  const data = await loadData();
+  const member = interaction.options.getMember("user") || interaction.member;
+  const userId = member.id;
 
-    const data = await loadData();
-    const targetUser =
-      interaction.options.getUser("user") || interaction.user;
+  data[userId] ??= { logs: [] };
 
-    const userId = targetUser.id;
-    data[userId] ??= { logs: [] };
+  const displayName = member.nickname || member.user.username;
 
-    // /clockin
-    if (interaction.commandName === "clockin") {
-      if (!interaction.member.voice.channelId) {
-        await interaction.editReply(
-          "❌ **Join a Discord voice channel before clocking in**"
-        );
-        return;
-      }
+  if (interaction.commandName === "clockin") {
+    if (!member.voice.channelId)
+      return interaction.editReply("❌ Join voice first.");
 
-      if (data[userId].active) {
-        await interaction.editReply("❌ You are already clocked in.");
-        return;
-      }
+    if (data[userId].active)
+      return interaction.editReply("❌ Already clocked in.");
 
-      data[userId].active = nowISO();
-      await saveData(data);
+    data[userId].active = nowISO();
+    await saveData(data);
 
-      await interaction.editReply("🟢 **Clocked IN successfully**");
-      return;
-    }
+    return interaction.editReply("🟢 Clocked IN");
+  }
 
-    // /clockout
-    if (interaction.commandName === "clockout") {
-      if (!data[userId].active) {
-        await interaction.editReply("❌ You are not clocked in.");
-        return;
-      }
+  if (interaction.commandName === "clockout") {
+    if (!data[userId].active)
+      return interaction.editReply("❌ Not clocked in.");
 
-      const start = data[userId].active;
-      const end = nowISO();
+    const start = data[userId].active;
+    const end = nowISO();
 
-      data[userId].logs.push({
-        start,
-        end,
-        hours: diffHours(start, end),
-      });
+    data[userId].logs.push({
+      start,
+      end,
+      hours: diffHours(start, end),
+    });
 
-      delete data[userId].active;
-      await saveData(data);
+    delete data[userId].active;
+    await saveData(data);
+    clearVoiceTimers(userId);
 
-      clearVoiceTimers(userId);
+    return interaction.editReply(`🔴 Clocked OUT — ${diffHours(start, end)}h`);
+  }
 
-      await interaction.editReply(
-        `🔴 **Clocked OUT** — ${diffHours(start, end)}h`
+  if (interaction.commandName === "status") {
+    if (data[userId].active) {
+      return interaction.editReply(
+        `🟢 CLOCKED IN\n` +
+        `👤 ${displayName}\n` +
+        `⏱ Started: ${formatDate(data[userId].active)}\n` +
+        `⌛ Elapsed: ${elapsed(data[userId].active)}`
       );
-      return;
     }
 
-    // /status
-    if (interaction.commandName === "status") {
-      if (data[userId].active) {
-        await interaction.editReply(
-          `🟢 **CLOCKED IN**\n` +
-          `👤 ${targetUser.tag}\n` +
-          `⏱ Started: ${formatDate(data[userId].active)}\n` +
-          `⌛ Elapsed: ${elapsed(data[userId].active)}`
-        );
-        return;
-      }
+    const total = data[userId].logs.reduce(
+      (t, l) => t + parseFloat(l.hours),
+      0
+    );
 
-      const logs = data[userId].logs;
-      const last = logs.at(-1);
-      const total = logs.reduce((t, l) => t + parseFloat(l.hours), 0);
-
-      await interaction.editReply(
-        `⚪ **CLOCKED OUT**\n` +
-        `👤 ${targetUser.tag}\n` +
-        (last ? `📄 Last session: ${last.hours}h\n` : "") +
-        `⏱ Total hours: ${total.toFixed(2)}h`
-      );
-      return;
-    }
-
-    // /timesheet
-    if (interaction.commandName === "timesheet") {
-      const logs = data[userId].logs;
-      if (!logs.length) {
-        await interaction.editReply(
-          `📭 No records found for **${targetUser.tag}**`
-        );
-        return;
-      }
-
-      let total = 0;
-      let msg = `🧾 **Timesheet — ${targetUser.tag}**\n`;
-
-      logs.forEach((l, i) => {
-        total += parseFloat(l.hours);
-        msg += `${i + 1}. ${formatDate(l.start)} → ${l.hours}h\n`;
-      });
-
-      msg += `\n⏱ **Total:** ${total.toFixed(2)}h`;
-      await interaction.editReply(msg);
-      return;
-    }
-
-    await interaction.editReply("❓ Unknown command.");
-  } catch (err) {
-    console.error("❌ Interaction error:", err);
-    await interaction.editReply("❌ An error occurred.");
+    return interaction.editReply(
+      `⚪ CLOCKED OUT\n` +
+      `👤 ${displayName}\n` +
+      `⏱ Total hours: ${total.toFixed(2)}h`
+    );
   }
 });
 
@@ -301,6 +262,7 @@ client.on("interactionCreate", async interaction => {
 // =======================
 (async () => {
   startKeepAlive();
+  await loadFromGitHub();
   await client.login(process.env.DISCORD_BOT_TOKEN);
   console.log(`✅ Logged in as ${client.user.tag}`);
 })();
