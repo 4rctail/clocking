@@ -82,6 +82,50 @@ function parseDate(str, end = false) {
   return date;
 }
 
+function getHardName(userId, interaction = null) {
+  try {
+    // 1️⃣ users.json override
+    if (users?.[userId]?.name?.trim()) {
+      return users[userId].name;
+    }
+
+    // 2️⃣ Guild nickname
+    const member =
+      interaction?.guild?.members?.cache?.get(userId);
+
+    if (member?.nickname) {
+      return member.nickname;
+    }
+
+    // 3️⃣ Discord username
+    if (member?.user?.username) {
+      return member.user.username;
+    }
+
+    // 4️⃣ users.json username
+    if (users?.[userId]?.username) {
+      return users[userId].username;
+    }
+
+    // ❌ Nothing worked
+    throw new Error("HardName resolution failed");
+  } catch (err) {
+    console.error(`❌ HardName error for user ${userId}:`, err.message);
+
+    // Send user-facing warning ONLY if interaction exists
+    if (interaction && !interaction.replied && !interaction.deferred) {
+      interaction.reply({
+        content:
+          "⚠️ Unable to resolve your display name. Using fallback ID.",
+        ephemeral: true,
+      }).catch(() => {});
+    }
+
+    return `Unknown User (${userId})`;
+  }
+}
+
+
 function formatElapsedLive(startISO) {
   const diff = Date.now() - new Date(startISO).getTime();
   const h = Math.floor(diff / 3600000);
@@ -231,7 +275,7 @@ client.on("interactionCreate", async interaction => {
   await interaction.deferReply();
   
   const userId = interaction.user.id;
-  const displayName = getHardName(userId);
+  const displayName = getHardName(userId, interaction);
   
   timesheet[userId] ??= { logs: [], name: displayName };
   timesheet[userId].name = displayName;
@@ -285,7 +329,7 @@ client.on("interactionCreate", async interaction => {
       title: "🟢 Clocked In",
       color: 0x2ecc71,
       fields: [
-        { name: "👤 User", value: getHardName(userId), inline: true },
+        { name: "👤 User", value: getHardName(userId, interaction), inline: true },
         { name: "📍 Voice Channel", value: voiceChannel, inline: true },
         { name: "⏱ Start Time", value: formatDate(start), inline: false },
       ],
@@ -328,7 +372,7 @@ client.on("interactionCreate", async interaction => {
       title: "🔴 Clocked Out",
       color: 0xe74c3c,
       fields: [
-        { name: "👤 User", value: getHardName(userId), inline: true },
+        { name: "👤 User", value: getHardName(userId, interaction), inline: true },
         { name: "📍 Voice Channel", value: voiceChannel, inline: true },
         { name: "▶️ Started", value: formatDate(start), inline: false },
         { name: "⏹ Ended", value: formatDate(end), inline: false },
@@ -361,7 +405,7 @@ client.on("interactionCreate", async interaction => {
         title: "🟢 Status: Clocked In",
         color: 0x2ecc71,
         fields: [
-          { name: "👤 User", value: getHardName(userId), inline: true },
+          { name: "👤 User", value: getHardName(userId, interaction), inline: true },
           {
             name: "📍 Voice Channel",
             value:
@@ -420,7 +464,7 @@ client.on("interactionCreate", async interaction => {
       title: "⚪ Status: Clocked Out",
       color: 0x95a5a6,
       fields: [
-        { name: "👤 User", value: getHardName(userId), inline: true },
+        { name: "👤 User", value: getHardName(userId, interaction), inline: true },
         {
           name: "⏱ Total Recorded Time",
           value: `${Math.round(total * 100) / 100}h`,
