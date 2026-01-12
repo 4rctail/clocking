@@ -40,7 +40,7 @@ export default {
     const sub = interaction.options.getSubcommand();
     if (sub !== "view") return;
 
-    // ✅ REQUIRED
+    // ✅ REQUIRED (ACK ONCE)
     await interaction.deferReply();
 
     const uid = interaction.user.id;
@@ -63,10 +63,15 @@ export default {
     let i = 1;
 
     for (const l of logs) {
-      const d = new Date(l.start);
-      if ((!start || d >= start) && (!end || d <= end)) {
-        total += parseFloat(l.hours);
-        output += `${i}. ${formatSession(l.start, l.end)} (${l.hours}h)\n`;
+      const sessionStart = new Date(l.start);
+      const sessionEnd   = new Date(l.end);
+
+      if ((!start || sessionStart >= start) && (!end || sessionStart <= end)) {
+        const sessionHours = (sessionEnd - sessionStart) / 36e5;
+
+        total += sessionHours;
+
+        output += `${i}. ${formatSession(l.start, l.end)} (${Math.floor(sessionHours * 100) / 100}h)\n`;
         i++;
       }
     }
@@ -78,9 +83,12 @@ export default {
       displayName = member.displayName;
     } catch {}
 
+    // ❌ NO ROUNDING UP
+    const safeTotal = Math.floor(total * 100) / 100;
+
     await interaction.editReply(
       `👤 **${displayName}**\n` +
-      `⏱ **Total: ${total.toFixed(2)}h**\n\n` +
+      `⏱ **Total: ${safeTotal}h**\n\n` +
       (output || "📭 No sessions found.")
     );
   }
