@@ -6,6 +6,7 @@ import { startKeepAlive } from "./keepAlive.js";
 // =======================
 // CONFIG
 // =======================
+const PH_TZ = "Asia/Manila";
 const DATA_FILE = "./timesheet.json";
 const MANAGER_ROLE_NAME = "Manager"; // change if needed
 const GIT_TOKEN = process.env.GIT_TOKEN;
@@ -37,26 +38,36 @@ function resolveDisplayName(interaction, member) {
 }
 
 function formatSession(startISO, endISO) {
+  const dateOpts = {
+    timeZone: PH_TZ,
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  };
+
+  const timeOpts = {
+    timeZone: PH_TZ,
+    hour: "numeric",
+    minute: "2-digit",
+  };
+
   const s = new Date(startISO);
   const e = new Date(endISO);
 
   const sameDay =
-    s.getFullYear() === e.getFullYear() &&
-    s.getMonth() === e.getMonth() &&
-    s.getDate() === e.getDate();
-
-  const dateOpts = { month: "long", day: "numeric", year: "numeric" };
-  const timeOpts = { hour: "numeric", minute: "2-digit" };
+    s.toLocaleDateString("en-PH", dateOpts) ===
+    e.toLocaleDateString("en-PH", dateOpts);
 
   const datePart = sameDay
-    ? s.toLocaleDateString("en-US", dateOpts)
-    : `${s.toLocaleDateString("en-US", dateOpts)} – ${e.toLocaleDateString("en-US", dateOpts)}`;
+    ? s.toLocaleDateString("en-PH", dateOpts)
+    : `${s.toLocaleDateString("en-PH", dateOpts)} – ${e.toLocaleDateString("en-PH", dateOpts)}`;
 
   const timePart =
-    `${s.toLocaleTimeString("en-US", timeOpts)} - ${e.toLocaleTimeString("en-US", timeOpts)}`;
+    `${s.toLocaleTimeString("en-PH", timeOpts)} - ${e.toLocaleTimeString("en-PH", timeOpts)}`;
 
   return `${datePart}, ${timePart}`;
 }
+
 
 function parseDate(str, end = false) {
   if (!str) return null;
@@ -108,7 +119,17 @@ const diffHours = (s, e) =>
   (new Date(e) - new Date(s)) / 3600000;
 
 
-const formatDate = iso => new Date(iso).toLocaleString();
+const formatDate = iso =>
+  new Date(iso).toLocaleString("en-PH", {
+    timeZone: PH_TZ,
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
 
 function elapsed(startISO) {
   const ms = Date.now() - new Date(startISO).getTime();
