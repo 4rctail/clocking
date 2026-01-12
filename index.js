@@ -244,6 +244,6 @@ client.on("interactionCreate", async interaction => {
 (async () => {
   startKeepAlive();
   await loadFromGitHub();
-  await client.login(process.env.DISCORD_BOT_TOKEN);
+  await client.login(process.env.DISCORD_TOKEN);
   console.log(`✅ Logged in as ${client.user.tag}`);
 })();
