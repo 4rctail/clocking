@@ -25,21 +25,15 @@ const client = new Client({
 
 
 
-async function resolveDisplayName(interaction) {
-  const guild = interaction.guild;
-
-  try {
-    const member = await guild.members.fetch(interaction.user.id);
-    return member.displayName;
-  } catch {
-    return (
-      interaction.user.globalName ||
-      interaction.user.username ||
-      "Unknown User"
-    );
-  }
+function resolveDisplayName(interaction, member) {
+  if (member?.displayName) return member.displayName;
+  if (member?.nickname) return member.nickname;
+  if (member?.user?.globalName) return member.user.globalName;
+  if (member?.user?.username) return member.user.username;
+  return interaction.user.globalName
+      || interaction.user.username
+      || "Unknown User";
 }
-
 
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
