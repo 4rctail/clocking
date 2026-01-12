@@ -25,25 +25,6 @@ const client = new Client({
 });
 
 
-const USERS_FILE = "./users.json";
-let users = {};
-
-try {
-  users = JSON.parse(await fs.readFile(USERS_FILE, "utf8"));
-} catch {
-  users = {};
-}
-
-const members = await interaction.guild.members.fetch();
-
-for (const [id, m] of members) {
-  users[id] ??= {
-    username: m.user.username,
-    name: ""
-  };
-}
-
-await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
 
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
@@ -238,13 +219,20 @@ function hasManagerRole(member) {
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
   await interaction.deferReply();
+
+  const member =
+    interaction.options.getMember("user") ??
+    interaction.member ??
+    (await interaction.guild.members.fetch(interaction.user.id));
   
-  const userId = interaction.user.id;
-  const displayName = getHardName(userId);
+  const userId = member.id;
+  const displayName = resolveDisplayName(interaction, member);
   
   timesheet[userId] ??= { logs: [], name: displayName };
-  timesheet[userId].name = displayName;
+  timesheet[userId].name = displayName; // keep updated
 
+
+  timesheet[userId] ??= { logs: [] };
   
     // -------- TOTAL HOURS (ALL USERS) --------
     // -------- TOTAL HOURS (ALL USERS) --------
@@ -253,16 +241,30 @@ client.on("interactionCreate", async interaction => {
     
       for (const [uid, u] of Object.entries(timesheet)) {
         if (!u.logs?.length) continue;
-      
-        let total = u.logs.reduce((t, l) => t + (l.hours || 0), 0);
+    
+        let total = 0;
+        for (const l of u.logs) {
+          total += l.hours || 0;
+        }
+    
+        // keep decimals like 0.01
         total = Math.round(total * 100) / 100;
-      
+    
+        // ❌ skip users with TOTAL ZERO
         if (total <= 0) continue;
-      
-        const name = getHardName(uid);
+    
+        let name = u.name || "Unknown";
+    
+        try {
+          const m = await interaction.guild.members.fetch(uid);
+          name = m.nickname || m.displayName;
+        } catch {
+          // fallback to stored name only (never username)
+          name = u.name || "Unknown";
+        }
+    
         lines.push(`${name} — ${total.toFixed(2)}h`);
       }
-
     
       if (!lines.length)
         return interaction.editReply("📭 No tracked hours.");
@@ -294,7 +296,7 @@ client.on("interactionCreate", async interaction => {
       title: "🟢 Clocked In",
       color: 0x2ecc71,
       fields: [
-        { name: "👤 User", value: getHardName(userId), inline: true },
+        { name: "👤 User", value: displayName, inline: true },
         { name: "📍 Voice Channel", value: voiceChannel, inline: true },
         { name: "⏱ Start Time", value: formatDate(start), inline: false },
       ],
@@ -337,7 +339,7 @@ client.on("interactionCreate", async interaction => {
       title: "🔴 Clocked Out",
       color: 0xe74c3c,
       fields: [
-        { name: "👤 User", value: getHardName(userId), inline: true },
+        { name: "👤 User", value: displayName, inline: true },
         { name: "📍 Voice Channel", value: voiceChannel, inline: true },
         { name: "▶️ Started", value: formatDate(start), inline: false },
         { name: "⏹ Ended", value: formatDate(end), inline: false },
@@ -370,7 +372,7 @@ client.on("interactionCreate", async interaction => {
         title: "🟢 Status: Clocked In",
         color: 0x2ecc71,
         fields: [
-          { name: "👤 User", value: getHardName(userId), inline: true },
+          { name: "👤 User", value: displayName, inline: true },
           {
             name: "📍 Voice Channel",
             value:
@@ -429,7 +431,7 @@ client.on("interactionCreate", async interaction => {
       title: "⚪ Status: Clocked Out",
       color: 0x95a5a6,
       fields: [
-        { name: "👤 User", value: getHardName(userId), inline: true },
+        { name: "👤 User", value: displayName, inline: true },
         {
           name: "⏱ Total Recorded Time",
           value: `${Math.round(total * 100) / 100}h`,
@@ -527,7 +529,7 @@ client.on("interactionCreate", async interaction => {
       title: "🧾 Timesheet",
       color: 0x3498db,
       fields: [
-        const targetName = getHardName(target.id);
+        { name: "👤 User", value: targetName, inline: true },
         { name: "📅 Range", value: rangeLabel, inline: true },
         { name: "🧮 Sessions", value: String(count), inline: true },
         {
@@ -556,26 +558,5 @@ client.on("interactionCreate", async interaction => {
   startKeepAlive();
   await loadFromGitHub();
   await client.login(process.env.DISCORD_TOKEN);
-  client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-
-  const guild = client.guilds.cache.first();
-  if (!guild) {
-    console.warn("⚠ No guild found");
-    return;
-  }
-
-  const members = await guild.members.fetch();
-
-  for (const [id, m] of members) {
-    users[id] ??= {
-      username: m.user.username,
-      name: "" // YOU fill this manually
-    };
-  }
-
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
-  console.log("✅ users.json synced");
-});
-
 })();
