@@ -3,8 +3,11 @@ import fs from "fs/promises";
 const FILE = "./timesheet.json";
 
 async function read() {
-  try { return JSON.parse(await fs.readFile(FILE)); }
-  catch { return {}; }
+  try {
+    return JSON.parse(await fs.readFile(FILE, "utf8"));
+  } catch {
+    return {};
+  }
 }
 
 async function write(d) {
@@ -19,11 +22,16 @@ export default {
   name: "clockout",
 
   async execute(interaction) {
+    // ✅ REQUIRED
+    await interaction.deferReply();
+
     const data = await read();
     const uid = interaction.user.id;
 
-    if (!data[uid]?.active)
-      return interaction.editReply("❌ Not clocked in.");
+    if (!data[uid]?.active) {
+      await interaction.editReply("❌ Not clocked in.");
+      return;
+    }
 
     const end = new Date().toISOString();
 
@@ -36,6 +44,6 @@ export default {
     delete data[uid].active;
     await write(data);
 
-    interaction.editReply("🔴 CLOCKED OUT");
+    await interaction.editReply("🔴 CLOCKED OUT");
   }
 };
