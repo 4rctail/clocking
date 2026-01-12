@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits } from "discord.js";
+import { Client, GatewayIntentBits, PermissionsBitField } from "discord.js";
 import fs from "fs/promises";
 import fetch from "node-fetch";
 import { startKeepAlive } from "./keepAlive.js";
@@ -39,38 +39,20 @@ async function writeJSON(file, data) {
   await fs.writeFile(file, JSON.stringify(data, null, 2));
 }
 
-function parseDate(str, end = false) {
-  const [m, d, y] = str.split("/").map(Number);
-  if (!m || !d || !y) return null;
-  const date = new Date(y, m - 1, d);
-  if (end) date.setHours(23, 59, 59, 999);
-  return date;
-}
-
 function diffHours(a, b) {
   return ((new Date(b) - new Date(a)) / 36e5).toFixed(2);
 }
 
+function formatDuration(ms) {
+  const h = Math.floor(ms / 36e5);
+  const m = Math.floor((ms % 36e5) / 6e4);
+  return `${h}h ${m}m`;
+}
+
 function formatSession(startISO, endISO) {
-  const start = new Date(startISO);
-  const end = new Date(endISO);
-
-  const sameDay =
-    start.getFullYear() === end.getFullYear() &&
-    start.getMonth() === end.getMonth() &&
-    start.getDate() === end.getDate();
-
-  const dateOpts = { month: "long", day: "numeric", year: "numeric" };
-  const timeOpts = { hour: "numeric", minute: "2-digit" };
-
-  const datePart = sameDay
-    ? start.toLocaleDateString("en-US", dateOpts)
-    : `${start.toLocaleDateString("en-US", dateOpts)} – ${end.toLocaleDateString("en-US", dateOpts)}`;
-
-  const timePart =
-    `${start.toLocaleTimeString("en-US", timeOpts)} - ${end.toLocaleTimeString("en-US", timeOpts)}`;
-
-  return `${datePart}, ${timePart}`;
+  const s = new Date(startISO);
+  const e = new Date(endISO);
+  return `${s.toLocaleString()} → ${e.toLocaleString()}`;
 }
 
 async function syncFile(file) {
@@ -83,7 +65,6 @@ async function syncFile(file) {
   const res = await fetch(api, {
     headers: { Authorization: `Bearer ${GIT_TOKEN}` },
   });
-
   if (res.ok) sha = (await res.json()).sha;
 
   await fetch(api, {
@@ -106,11 +87,8 @@ async function syncFile(file) {
 // =======================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-
-  // 🔒 ALWAYS DEFER ONCE — prevents 40060 forever
   await interaction.deferReply();
 
-  const member = interaction.member;
   const timesheet = await readJSON(ACTIVE_FILE);
   const history   = await readJSON(HISTORY_FILE);
 
@@ -121,7 +99,7 @@ client.on("interactionCreate", async interaction => {
     const uid = interaction.user.id;
     timesheet[uid] ??= { logs: [] };
 
-    if (!member.voice?.channelId)
+    if (!interaction.member.voice?.channelId)
       return interaction.editReply("❌ Join voice first.");
 
     if (timesheet[uid].active)
@@ -161,53 +139,70 @@ client.on("interactionCreate", async interaction => {
   }
 
   // =======================
+  // STATUS
+  // =======================
+  if (interaction.commandName === "status") {
+    const user = interaction.options.getUser("user") || interaction.user;
+    const uid = user.id;
+    const data = timesheet[uid];
+
+    if (!data)
+      return interaction.editReply(`📭 No records for **${user.username}**`);
+
+    let msg = `👤 **${user.username}**\n`;
+
+    if (data.active) {
+      const elapsed = Date.now() - new Date(data.active).getTime();
+      msg += `🟢 **Clocked In**\n⏱ ${formatDuration(elapsed)}`;
+    } else {
+      msg += `🔴 **Not Clocked In**`;
+    }
+
+    return interaction.editReply(msg);
+  }
+
+  // =======================
+  // TOTAL HOURS
+  // =======================
+  if (interaction.commandName === "totalhr") {
+    let total = 0;
+
+    for (const uid in timesheet) {
+      for (const l of timesheet[uid].logs || []) {
+        total += parseFloat(l.hours);
+      }
+    }
+
+    return interaction.editReply(`⏱ **Total hours (all users): ${total.toFixed(2)}h**`);
+  }
+
+  // =======================
   // TIMESHEET
   // =======================
   if (interaction.commandName === "timesheet") {
     const sub = interaction.options.getSubcommand();
 
-    // ---------- VIEW ----------
-    if (sub === "view") {
-      const user = interaction.options.getUser("user") || interaction.user;
-      const uid = user.id;
+    // ---------- RESET ----------
+    if (sub === "reset") {
+      const member = interaction.member;
+      const hasManager = member.roles.cache.some(r => r.name === "Manager");
 
-      const startStr = interaction.options.getString("start");
-      const endStr   = interaction.options.getString("end");
+      if (!hasManager)
+        return interaction.editReply("❌ Manager role required.");
 
-      const start = startStr ? parseDate(startStr) : null;
-      const end   = endStr ? parseDate(endStr, true) : null;
+      const stamp = new Date().toISOString();
+      history[stamp] = timesheet;
 
-      let sessions = "";
-      let i = 1;
-      let grandTotal = 0;
-      let lastSessionHours = null;
+      await writeJSON(HISTORY_FILE, history);
+      await writeJSON(ACTIVE_FILE, {});
 
-      const logs = timesheet[uid]?.logs || [];
+      await syncFile("timesheet.json");
+      await syncFile("timesheetHistory.json");
 
-      for (const l of logs) {
-        grandTotal += parseFloat(l.hours);
-        lastSessionHours = l.hours;
-
-        const d = new Date(l.start);
-        if ((!start || d >= start) && (!end || d <= end)) {
-          sessions += `${i}. ${formatSession(l.start, l.end)}\n`;
-          i++;
-        }
-      }
-
-      return interaction.editReply(
-        `👤 **${interaction.guild.members.cache.get(uid)?.displayName || user.username}**\n` +
-        `⏱ **${grandTotal.toFixed(2)}h**\n\n` +
-        (sessions
-          ? `${sessions}\n**Last session hours:** ${lastSessionHours}`
-          : "📭 No sessions found.")
-      );
+      return interaction.editReply("♻️ Timesheet reset and archived.");
     }
   }
 
-  // =======================
-  // FALLBACK
-  // =======================
   return interaction.editReply("❌ Unknown command.");
 });
 
