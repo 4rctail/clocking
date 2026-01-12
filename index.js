@@ -14,8 +14,6 @@ const __dirname = path.dirname(__filename);
 // =======================
 // CLIENT
 // =======================
-import { GatewayIntentBits } from "discord.js";
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -24,6 +22,7 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates
   ]
 });
+
 
 
 
