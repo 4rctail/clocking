@@ -17,9 +17,11 @@ const __dirname = path.dirname(__filename);
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates,
-  ],
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates
+  ]
 });
+
 
 // =======================
 // COMMAND LOADER
