@@ -23,6 +23,16 @@ const client = new Client({
   ],
 });
 
+function resolveDisplayName(interaction, member) {
+  if (member?.displayName) return member.displayName;
+  if (member?.nickname) return member.nickname;
+  if (member?.user?.globalName) return member.user.globalName;
+  if (member?.user?.username) return member.user.username;
+  return interaction.user.globalName
+      || interaction.user.username
+      || "Unknown User";
+}
+
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
   const e = new Date(endISO);
@@ -207,10 +217,17 @@ client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
   await interaction.deferReply();
 
-  const member = interaction.options.getMember("user") || interaction.member;
+  const member =
+    interaction.options.getMember("user") ??
+    interaction.member ??
+    (await interaction.guild.members.fetch(interaction.user.id));
   
   const userId = member.id;
-  const displayName = member.nickname || member.user.username;
+  const displayName = resolveDisplayName(interaction, member);
+  
+  timesheet[userId] ??= { logs: [], name: displayName };
+  timesheet[userId].name = displayName; // keep updated
+
 
   timesheet[userId] ??= { logs: [] };
   
@@ -230,11 +247,13 @@ client.on("interactionCreate", async interaction => {
   
       const safeTotal = Math.floor(total * 100) / 100;
   
-      let name = uid;
+      let name = timesheet[uid]?.name || uid;
+      
       try {
         const m = await interaction.guild.members.fetch(uid);
-        name = m.displayName;
+        name = resolveDisplayName(interaction, m);
       } catch {}
+
   
       msg += `${name} = ${safeTotal} hours\n`;
     }
@@ -250,6 +269,8 @@ client.on("interactionCreate", async interaction => {
       return interaction.editReply("❌ Already clocked in.");
 
     timesheet[userId].active = nowISO();
+    timesheet[userId].name = displayName;
+
     await persist();
 
     return interaction.editReply("🟢 Clocked IN");
@@ -346,7 +367,13 @@ client.on("interactionCreate", async interaction => {
     if (!logs.length)
       return interaction.editReply("📭 No records found.");
   
-    let msg = `🧾 Timesheet — ${target.displayName}\n\n`;
+    const targetName =
+      resolveDisplayName(interaction, target) ||
+      timesheet[target.id]?.name ||
+      "Unknown User";
+    
+    let msg = `🧾 Timesheet — ${targetName}\n\n`;
+
     let total = 0;
     let i = 1;
   
