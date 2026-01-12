@@ -25,6 +25,25 @@ const client = new Client({
 });
 
 
+const USERS_FILE = "./users.json";
+let users = {};
+
+try {
+  users = JSON.parse(await fs.readFile(USERS_FILE, "utf8"));
+} catch {
+  users = {};
+}
+
+const members = await interaction.guild.members.fetch();
+
+for (const [id, m] of members) {
+  users[id] ??= {
+    username: m.user.username,
+    name: ""
+  };
+}
+
+await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
 
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
