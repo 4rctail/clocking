@@ -1,7 +1,12 @@
 {
   "undefined": {
-    "logs": [],
-    "name": "no.body.found",
-    "active": "2026-01-12T21:19:25.560Z"
+    "logs": [
+      {
+        "start": "2026-01-12T21:19:25.560Z",
+        "end": "2026-01-12T21:20:32.586Z",
+        "hours": 0.018618333333333334
+      }
+    ],
+    "name": "no.body.found"
   }
 }
