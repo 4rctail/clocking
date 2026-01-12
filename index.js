@@ -1,49 +1,71 @@
+import { Client, GatewayIntentBits, Collection } from "discord.js";
 import fs from "fs/promises";
+import { startKeepAlive } from "./keepAlive.js";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const FILE = "./timesheet.json";
+// =======================
+// PATH FIX
+// =======================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-async function read() {
+// =======================
+// CLIENT
+// =======================
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds
+  ]
+});
+
+client.commands = new Collection();
+
+// =======================
+// LOAD COMMANDS
+// =======================
+const commandsPath = path.join(__dirname, "commands");
+const files = await fs.readdir(commandsPath);
+
+for (const file of files) {
+  if (!file.endsWith(".js")) continue;
+  const cmd = await import(`./commands/${file}`);
+  client.commands.set(cmd.default.name, cmd.default);
+}
+
+// =======================
+// INTERACTION HANDLER
+// =======================
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const command = client.commands.get(interaction.commandName);
+  if (!command) return;
+
   try {
-    return JSON.parse(await fs.readFile(FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
+    // 🔒 ALWAYS defer ONCE
+    await interaction.deferReply({ ephemeral: false });
 
-async function write(data) {
-  await fs.writeFile(FILE, JSON.stringify(data, null, 2));
-}
+    // 🔒 Commands must ONLY editReply
+    await command.execute(interaction);
 
-export default {
-  name: "clockin",
+  } catch (err) {
+    console.error("❌ Command Error");
+    console.error("Guild:", interaction.guild?.id, interaction.guild?.name);
+    console.error("Command:", interaction.commandName);
+    console.error(err);
 
-  async execute(interaction) {
-    // MUST be in a guild
-    if (!interaction.inGuild()) {
-      return interaction.editReply({
-        content: "❌ This command can only be used in a server."
-      });
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply("❌ An internal error occurred.");
     }
-
-    const uid = interaction.user.id;
-    const data = await read();
-
-    data[uid] ??= {};
-
-    if (data[uid].active) {
-      return interaction.editReply({
-        content: "❌ You are already clocked in."
-      });
-    }
-
-    data[uid].active = {
-      time: new Date().toISOString()
-    };
-
-    await write(data);
-
-    return interaction.editReply({
-      content: "🟢 **CLOCKED IN**"
-    });
   }
-};
+});
+
+// =======================
+// START BOT
+// =======================
+(async () => {
+  startKeepAlive();
+  await client.login(process.env.DISCORD_BOT_TOKEN);
+  console.log(`✅ Logged in as ${client.user.tag}`);
+})();
