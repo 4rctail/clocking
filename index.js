@@ -41,11 +41,7 @@ client.on("interactionCreate", async interaction => {
   if (!command) return;
 
   try {
-    // ✅ ACK ASAP — prevents cold start expiry
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.deferReply();
-    }
-
+    // ❗ DO NOT defer here
     await command.execute(interaction);
 
   } catch (err) {
@@ -53,13 +49,15 @@ client.on("interactionCreate", async interaction => {
     console.error("Command:", interaction.commandName);
     console.error(err);
 
-    // 🔒 Interaction may already be invalid — guard it
     try {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply("❌ An internal error occurred.");
+      if (!interaction.replied) {
+        await interaction.reply({
+          content: "❌ An internal error occurred.",
+          ephemeral: true
+        });
       }
     } catch {
-      // interaction is gone — nothing we can do
+      // Interaction already expired — ignore
     }
   }
 });
