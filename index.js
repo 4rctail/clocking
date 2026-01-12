@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, PermissionsBitField } from "discord.js";
+import { Client, GatewayIntentBits } from "discord.js";
 import fs from "fs/promises";
 import fetch from "node-fetch";
 import { startKeepAlive } from "./keepAlive.js";
@@ -12,13 +12,13 @@ const HISTORY_FILE = "./timesheetHistory.json";
 // =======================
 // GITHUB
 // =======================
-const GIT_TOKEN = process.env.GIT_TOKEN;
-const GIT_USER = process.env.GIT_USER;
-const GIT_REPO = process.env.GIT_REPO;
+const GIT_TOKEN  = process.env.GIT_TOKEN;
+const GIT_USER   = process.env.GIT_USER;
+const GIT_REPO   = process.env.GIT_REPO;
 const GIT_BRANCH = process.env.GIT_BRANCH || "main";
 
 // =======================
-// CLIENT
+// DISCORD CLIENT
 // =======================
 const client = new Client({
   intents: [
@@ -45,13 +45,16 @@ async function writeJSON(file, data) {
 // =======================
 // TIME HELPERS
 // =======================
-function parseDate(str) {
+function parseDate(str, end = false) {
   const [m, d, y] = str.split("/").map(Number);
-  return new Date(y, m - 1, d);
+  if (!m || !d || !y) return null;
+  const date = new Date(y, m - 1, d);
+  if (end) date.setHours(23, 59, 59, 999);
+  return date;
 }
 
-function diffHours(a, b) {
-  return ((new Date(b) - new Date(a)) / 36e5).toFixed(2);
+function diffHours(start, end) {
+  return ((new Date(end) - new Date(start)) / 36e5).toFixed(2);
 }
 
 // =======================
@@ -64,11 +67,11 @@ async function syncFile(file) {
   const content = Buffer.from(await fs.readFile(file)).toString("base64");
 
   let sha = null;
-  const res = await fetch(api, {
+  const get = await fetch(api, {
     headers: { Authorization: `Bearer ${GIT_TOKEN}` },
   });
 
-  if (res.ok) sha = (await res.json()).sha;
+  if (get.ok) sha = (await get.json()).sha;
 
   await fetch(api, {
     method: "PUT",
@@ -88,13 +91,6 @@ async function syncFile(file) {
 }
 
 // =======================
-// VOICE CHECK
-// =======================
-function inVoice(member) {
-  return member?.voice?.channelId;
-}
-
-// =======================
 // COMMAND HANDLER
 // =======================
 client.on("interactionCreate", async interaction => {
@@ -103,138 +99,127 @@ client.on("interactionCreate", async interaction => {
   const member = interaction.member;
   const userId = interaction.user.id;
 
-  const data = await readJSON(ACTIVE_FILE);
-  const history = await readJSON(HISTORY_FILE);
+  const timesheet = await readJSON(ACTIVE_FILE);
+  const history   = await readJSON(HISTORY_FILE);
 
-  data[userId] ??= { logs: [] };
+  timesheet[userId] ??= { logs: [] };
+
+  const displayName = member.displayName;
 
   // =======================
   // CLOCK IN
   // =======================
   if (interaction.commandName === "clockin") {
-    if (!inVoice(member)) {
-      await interaction.reply("❌ Join a voice channel before clocking in.");
-      return;
-    }
+    if (!member.voice?.channelId)
+      return interaction.reply("❌ Join a voice channel first.");
 
-    if (data[userId].active) {
-      await interaction.reply("❌ Already clocked in.");
-      return;
-    }
+    if (timesheet[userId].active)
+      return interaction.reply("❌ Already clocked in.");
 
-    data[userId].active = new Date().toISOString();
-    await writeJSON(ACTIVE_FILE, data);
+    timesheet[userId].active = new Date().toISOString();
+    await writeJSON(ACTIVE_FILE, timesheet);
     await syncFile("timesheet.json");
 
-    await interaction.reply("🟢 CLOCKED IN");
-    return;
+    return interaction.reply("🟢 CLOCKED IN");
   }
 
   // =======================
   // CLOCK OUT
   // =======================
   if (interaction.commandName === "clockout") {
-    if (!data[userId].active) {
-      await interaction.reply("❌ Not clocked in.");
-      return;
-    }
+    const start = timesheet[userId].active;
+    if (!start)
+      return interaction.reply("❌ Not clocked in.");
 
-    const start = data[userId].active;
     const end = new Date().toISOString();
 
-    data[userId].logs.push({
+    timesheet[userId].logs.push({
       start,
       end,
       hours: diffHours(start, end),
     });
 
-    delete data[userId].active;
+    delete timesheet[userId].active;
 
-    await writeJSON(ACTIVE_FILE, data);
+    await writeJSON(ACTIVE_FILE, timesheet);
     await syncFile("timesheet.json");
 
-    await interaction.reply("🔴 CLOCKED OUT");
-    return;
+    return interaction.reply("🔴 CLOCKED OUT");
   }
 
   // =======================
   // TIMESHEET
   // =======================
   if (interaction.commandName === "timesheet") {
-    const sub = interaction.options.getSubcommand(false);
+    const sub = interaction.options.getSubcommand();
+
+    // ---------- VIEW ----------
+    if (sub === "view") {
+      const startStr = interaction.options.getString("start");
+      const endStr   = interaction.options.getString("end");
+
+      const start = startStr ? parseDate(startStr) : null;
+      const end   = endStr ? parseDate(endStr, true) : null;
+
+      let total = 0;
+      for (const l of timesheet[userId].logs) {
+        const d = new Date(l.start);
+        if ((!start || d >= start) && (!end || d <= end))
+          total += parseFloat(l.hours);
+      }
+
+      return interaction.reply(
+        `📊 **Timesheet Total**\n👤 ${displayName}\n⏱ **${total.toFixed(2)}h**`
+      );
+    }
 
     // ---------- RESET ----------
     if (sub === "reset") {
       const isManager = member.roles.cache.some(r => r.name === "Manager");
-      if (!isManager) {
-        await interaction.reply("❌ Only @Manager can reset timesheets.");
-        return;
-      }
+      if (!isManager)
+        return interaction.reply("❌ Only **@Manager** can reset timesheets.");
 
       const startStr = interaction.options.getString("start");
-      const endStr = interaction.options.getString("end");
+      const endStr   = interaction.options.getString("end");
 
-      const startDate = startStr ? parseDate(startStr) : null;
-      const endDate = endStr ? parseDate(endStr) : null;
+      const start = startStr ? parseDate(startStr) : null;
+      const end   = endStr ? parseDate(endStr, true) : null;
 
-      for (const uid in data) {
-        const logs = data[uid].logs || [];
+      for (const uid in timesheet) {
+        const logs = timesheet[uid].logs || [];
         const keep = [];
         const move = [];
 
-        logs.forEach(l => {
+        for (const l of logs) {
           const d = new Date(l.start);
           const inRange =
-            (!startDate || d >= startDate) &&
-            (!endDate || d <= endDate);
+            (!start || d >= start) &&
+            (!end || d <= end);
 
           (inRange ? move : keep).push(l);
-        });
+        }
 
         if (move.length) {
           history[uid] ??= [];
           history[uid].push(...move);
         }
 
-        data[uid].logs = keep;
+        timesheet[uid].logs = keep;
       }
 
+      await writeJSON(ACTIVE_FILE, timesheet);
       await writeJSON(HISTORY_FILE, history);
-      await writeJSON(ACTIVE_FILE, data);
 
-      await syncFile("timesheetHistory.json");
       await syncFile("timesheet.json");
+      await syncFile("timesheetHistory.json");
 
-      await interaction.reply("♻️ Timesheet reset completed.");
-      return;
+      return interaction.reply("♻️ Timesheet reset completed.");
     }
-
-    // ---------- VIEW ----------
-    const logs = data[userId].logs || [];
-    const startStr = interaction.options.getString("start");
-    const endStr = interaction.options.getString("end");
-
-    let startDate = startStr ? parseDate(startStr) : null;
-    let endDate = endStr ? parseDate(endStr) : null;
-
-    let total = 0;
-    logs.forEach(l => {
-      const d = new Date(l.start);
-      if (
-        (!startDate || d >= startDate) &&
-        (!endDate || d <= endDate)
-      ) {
-        total += parseFloat(l.hours);
-      }
-    });
-
-    await interaction.reply(`⏱ Total hours: **${total.toFixed(2)}h**`);
-    return;
   }
 });
 
 // =======================
-// START
+// STARTUP
 // =======================
 (async () => {
   startKeepAlive();
