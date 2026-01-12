@@ -11,7 +11,7 @@ const DATA_FILE = "./timesheet.json";
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
-const GIT_BRANCH = process.env.GIT_BRANCH || "Bot";
+const GIT_BRANCH = process.env.GIT_BRANCH || "main";
 
 // =======================
 // DISCORD CLIENT
@@ -45,6 +45,17 @@ function nowISO() {
 
 function diffHours(start, end) {
   return ((new Date(end) - new Date(start)) / 3600000).toFixed(2);
+}
+
+function formatDate(iso) {
+  return new Date(iso).toLocaleString();
+}
+
+function elapsed(startISO) {
+  const ms = Date.now() - new Date(startISO).getTime();
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return `${h}h ${m}m`;
 }
 
 // =======================
@@ -92,27 +103,30 @@ client.on("interactionCreate", async interaction => {
 
     await interaction.deferReply({ ephemeral: true });
 
-    const userId = interaction.user.id;
     const data = await loadData();
+    const targetUser =
+      interaction.options.getUser("user") || interaction.user;
+
+    const userId = targetUser.id;
+    data[userId] ??= { logs: [] };
 
     // /clockin
     if (interaction.commandName === "clockin") {
-      if (data[userId]?.active) {
+      if (data[userId].active) {
         await interaction.editReply("❌ You are already clocked in.");
         return;
       }
 
-      data[userId] ??= { logs: [] };
       data[userId].active = nowISO();
-
       await saveData(data);
+
       await interaction.editReply("🟢 **Clocked IN successfully**");
       return;
     }
 
     // /clockout
     if (interaction.commandName === "clockout") {
-      if (!data[userId]?.active) {
+      if (!data[userId].active) {
         await interaction.editReply("❌ You are not clocked in.");
         return;
       }
@@ -137,42 +151,60 @@ client.on("interactionCreate", async interaction => {
 
     // /status
     if (interaction.commandName === "status") {
-      if (data[userId]?.active) {
+      if (data[userId].active) {
         await interaction.editReply(
-          `🟡 Clocked IN since:\n\`${data[userId].active}\``
+          `🟢 **Status: CLOCKED IN**\n` +
+          `👤 ${targetUser.tag}\n` +
+          `⏱ Started: ${formatDate(data[userId].active)}\n` +
+          `⌛ Elapsed: ${elapsed(data[userId].active)}`
         );
         return;
       }
 
-      await interaction.editReply("⚪ You are NOT clocked in.");
+      const logs = data[userId].logs;
+      const last = logs.at(-1);
+      const total = logs.reduce(
+        (t, l) => t + parseFloat(l.hours),
+        0
+      );
+
+      await interaction.editReply(
+        `⚪ **Status: CLOCKED OUT**\n` +
+        `👤 ${targetUser.tag}\n` +
+        (last ? `📄 Last session: ${last.hours}h\n` : "") +
+        `⏱ Total hours: ${total.toFixed(2)}h`
+      );
       return;
     }
 
     // /timesheet
     if (interaction.commandName === "timesheet") {
-      const logs = data[userId]?.logs || [];
+      const logs = data[userId].logs;
+
       if (!logs.length) {
-        await interaction.editReply("📭 No records found.");
+        await interaction.editReply(
+          `📭 No records found for **${targetUser.tag}**`
+        );
         return;
       }
 
       let total = 0;
-      let msg = "🧾 **Your Timesheet**\n";
+      let msg = `🧾 **Timesheet — ${targetUser.tag}**\n`;
 
-      logs.forEach((l, idx) => {
+      logs.forEach((l, i) => {
         total += parseFloat(l.hours);
-        msg += `${idx + 1}. ${l.hours}h\n`;
+        msg += `${i + 1}. ${formatDate(l.start)} → ${l.hours}h\n`;
       });
 
-      msg += `\n⏱ **Total Hours:** ${total.toFixed(2)}h`;
+      msg += `\n⏱ **Total:** ${total.toFixed(2)}h`;
       await interaction.editReply(msg);
       return;
     }
 
     await interaction.editReply("❓ Unknown command.");
 
-  } catch (error) {
-    console.error("❌ Interaction error:", error);
+  } catch (err) {
+    console.error("❌ Interaction error:", err);
 
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply("❌ An error occurred.");
