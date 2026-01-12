@@ -25,10 +25,6 @@ const client = new Client({
   ],
 });
 
-const targetMember =
-  interaction.options.getMember("user") || interaction.member;
-
-
 
 function resolveDisplayName(interaction, member) {
   if (member?.displayName) return member.displayName;
@@ -56,8 +52,6 @@ function formatSession(startISO, endISO) {
 
   const s = new Date(startISO);
   const e = new Date(endISO);
-  const targetMember =
-    interaction.options.getMember("user") || interaction.member;
 
   const sameDay =
     s.toLocaleDateString("en-PH", dateOpts) ===
@@ -72,6 +66,7 @@ function formatSession(startISO, endISO) {
 
   return `${datePart}, ${timePart}`;
 }
+
 
 async function loadFromDisk() {
   try {
@@ -519,81 +514,80 @@ client.on("interactionCreate", async interaction => {
     }
   
     // ===== VIEW =====
-    // ===== VIEW (EMBED) =====
-    const target =
-      await loadFromDisk(); // 🔒 authoritative read
-      
-        const target =
-          interaction.options.getMember("user") || interaction.member;
-      
-        const userData = timesheet[targetMember.id];
-        if (!userData || !Array.isArray(userData.logs) || userData.logs.length === 0) {
-          return interaction.editReply("📭 No records found.");
-        }
-      
-        const targetName =
-          targetMember.displayName ||
-          userData.name ||
-          "Unknown User";
-      
-        const startStr = interaction.options.getString("start");
-        const endStr   = interaction.options.getString("end");
-      
-        const start = parseDate(startStr);
-        const end   = parseDate(endStr, true);
-      
-        let total = 0;
-        let lines = [];
-        let count = 0;
-      
-        for (const l of userData.logs) {
-          const s = new Date(l.start);
-          if ((start && s < start) || (end && s > end)) continue;
-      
-          const hours =
-            (new Date(l.end) - new Date(l.start)) / 3600000;
-      
-          total += hours;
-          count++;
-      
-          lines.push(
-            `**${count}.** ${formatSession(l.start, l.end)} — **${Math.round(hours * 100) / 100}h**`
-          );
-        }
-      
-        if (!count) {
-          return interaction.editReply("📭 No sessions in range.");
-        }
-      
-        const rangeLabel =
-          startStr || endStr
-            ? `${startStr || "Beginning"} → ${endStr || "Now"}`
-            : "All time";
-      
-        return interaction.editReply({
-          embeds: [{
-            title: "🧾 Timesheet",
-            color: 0x3498db,
-            fields: [
-              { name: "👤 User", value: targetName, inline: true },
-              { name: "📅 Range", value: rangeLabel, inline: true },
-              { name: "🧮 Sessions", value: String(count), inline: true },
-              {
-                name: "⏱ Total Hours",
-                value: `${Math.round(total * 100) / 100}h`,
-                inline: true,
-              },
-              {
-                name: "📋 Logs",
-                value: lines.join("\n"),
-                inline: false,
-              },
-            ],
-            footer: { text: "Time Tracker" },
-            timestamp: new Date().toISOString(),
-          }],
-        });
-      }
+    // ===== VIEW =====
+    await loadFromDisk(); // 🔒 authoritative read
+    
+    const targetMember =
+      interaction.options.getMember("user") || interaction.member;
+    
+    const userData = timesheet[targetMember.id];
+    if (!userData || !Array.isArray(userData.logs) || userData.logs.length === 0) {
+      return interaction.editReply("📭 No records found.");
+    }
+    
+    const targetName =
+      targetMember.displayName ||
+      userData.name ||
+      "Unknown User";
+    
+    const startStr = interaction.options.getString("start");
+    const endStr   = interaction.options.getString("end");
+    
+    const start = parseDate(startStr);
+    const end   = parseDate(endStr, true);
+    
+    let total = 0;
+    let lines = [];
+    let count = 0;
+    
+    for (const l of userData.logs) {
+      const s = new Date(l.start);
+      if ((start && s < start) || (end && s > end)) continue;
+    
+      const hours =
+        (new Date(l.end) - new Date(l.start)) / 3600000;
+    
+      total += hours;
+      count++;
+    
+      lines.push(
+        `**${count}.** ${formatSession(l.start, l.end)} — **${Math.round(hours * 100) / 100}h**`
+      );
+    }
+    
+    if (!count) {
+      return interaction.editReply("📭 No sessions in range.");
+    }
+    
+    const rangeLabel =
+      startStr || endStr
+        ? `${startStr || "Beginning"} → ${endStr || "Now"}`
+        : "All time";
+    
+    return interaction.editReply({
+      embeds: [{
+        title: "🧾 Timesheet",
+        color: 0x3498db,
+        fields: [
+          { name: "👤 User", value: targetName, inline: true },
+          { name: "📅 Range", value: rangeLabel, inline: true },
+          { name: "🧮 Sessions", value: String(count), inline: true },
+          {
+            name: "⏱ Total Hours",
+            value: `${Math.round(total * 100) / 100}h`,
+            inline: true,
+          },
+          {
+            name: "📋 Logs",
+            value: lines.join("\n"),
+            inline: false,
+          },
+        ],
+        footer: { text: "Time Tracker" },
+        timestamp: new Date().toISOString(),
+      }],
+    });
+  }
 
 // =======================
 // STARTUP
