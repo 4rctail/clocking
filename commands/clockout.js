@@ -10,8 +10,8 @@ async function read() {
   }
 }
 
-async function write(d) {
-  await fs.writeFile(FILE, JSON.stringify(d, null, 2));
+async function write(data) {
+  await fs.writeFile(FILE, JSON.stringify(data, null, 2));
 }
 
 function diffHours(a, b) {
@@ -22,8 +22,7 @@ export default {
   name: "clockout",
 
   async execute(interaction) {
-    // ✅ REQUIRED
-    await interaction.deferReply();
+    await interaction.reply("🔴 Clocking out...");
 
     const data = await read();
     const uid = interaction.user.id;
@@ -38,7 +37,7 @@ export default {
     data[uid].logs.push({
       start: data[uid].active,
       end,
-      hours: diffHours(data[uid].active, end),
+      hours: diffHours(data[uid].active, end)
     });
 
     delete data[uid].active;
