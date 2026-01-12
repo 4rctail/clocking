@@ -258,21 +258,26 @@ client.on("interactionCreate", async interaction => {
   
   const userId = member.id;
   const displayName = resolveDisplayName(interaction, member);
+  if (!timesheet[userId]) {
+    timesheet[userId] = {
+      name: displayName,
+      logs: [],
+    };
+  }
   
-  timesheet[userId] ??= { logs: [], name: displayName };
-  timesheet[userId].name = displayName; // keep updated
-
-
-  timesheet[userId] ??= { logs: [] };
+  timesheet[userId].active = start;
+  timesheet[userId].name = displayName;
   
+    
     // -------- TOTAL HOURS (ALL USERS) --------
     // -------- TOTAL HOURS (ALL USERS) --------
     if (interaction.commandName === "totalhr") {
       let lines = [];
-    
+      if (!u.logs || u.logs.length === 0) continue;
+
       for (const [uid, u] of Object.entries(timesheet)) {
         if (!u.logs?.length) continue;
-    
+      
         let total = 0;
         for (const l of u.logs) {
           total += l.hours || 0;
@@ -525,10 +530,10 @@ client.on("interactionCreate", async interaction => {
     const start = parseDate(startStr);
     const end   = parseDate(endStr, true);
     
-    const logs = timesheet[target.id]?.logs || [];
-    if (!logs.length)
+    if (!timesheet[target.id] || !timesheet[target.id].logs?.length) {
       return interaction.editReply("📭 No records found.");
-    
+    }
+
     let total = 0;
     let lines = [];
     let count = 0;
