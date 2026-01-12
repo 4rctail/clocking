@@ -25,6 +25,9 @@ const client = new Client({
   ],
 });
 
+const targetMember =
+  interaction.options.getMember("user") || interaction.member;
+
 
 
 function resolveDisplayName(interaction, member) {
@@ -53,6 +56,8 @@ function formatSession(startISO, endISO) {
 
   const s = new Date(startISO);
   const e = new Date(endISO);
+  const targetMember =
+    interaction.options.getMember("user") || interaction.member;
 
   const sameDay =
     s.toLocaleDateString("en-PH", dateOpts) ===
@@ -521,13 +526,13 @@ client.on("interactionCreate", async interaction => {
         const target =
           interaction.options.getMember("user") || interaction.member;
       
-        const userData = timesheet[target.id];
+        const userData = timesheet[targetMember.id];
         if (!userData || !Array.isArray(userData.logs) || userData.logs.length === 0) {
           return interaction.editReply("📭 No records found.");
         }
       
         const targetName =
-          target.displayName ||
+          targetMember.displayName ||
           userData.name ||
           "Unknown User";
       
