@@ -37,16 +37,20 @@ for (const file of files) {
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const command = client.commands.get(interaction.commandName);
+  const command = commands.get(interaction.commandName);
   if (!command) return;
 
-  // ✅ ACK IMMEDIATELY — REQUIRED ON RENDER
   try {
-    await interaction.deferReply();
+    await command.execute(interaction);
   } catch (err) {
-    // Interaction already expired — nothing we can do
-    return;
+    console.error(`❌ Command Error: ${interaction.commandName}`, err);
+
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply("❌ An internal error occurred.");
+    }
   }
+});
+
 
   try {
     await command.execute(interaction);
