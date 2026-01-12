@@ -90,28 +90,86 @@ client.on("interactionCreate", async interaction => {
   try {
     if (!interaction.isChatInputCommand()) return;
 
-    // ✅ INSTANT ACK — prevents "application did not respond"
     await interaction.deferReply({ ephemeral: true });
 
+    const userId = interaction.user.id;
+    const data = await loadData();
+
+    // /clockin
     if (interaction.commandName === "clockin") {
-      await interaction.editReply("🕒 You are now clocked in!");
+      if (data[userId]?.active) {
+        await interaction.editReply("❌ You are already clocked in.");
+        return;
+      }
+
+      data[userId] ??= { logs: [] };
+      data[userId].active = nowISO();
+
+      await saveData(data);
+      await interaction.editReply("🟢 **Clocked IN successfully**");
+      return;
     }
 
-    else if (interaction.commandName === "clockout") {
-      await interaction.editReply("🕔 You are now clocked out!");
+    // /clockout
+    if (interaction.commandName === "clockout") {
+      if (!data[userId]?.active) {
+        await interaction.editReply("❌ You are not clocked in.");
+        return;
+      }
+
+      const start = data[userId].active;
+      const end = nowISO();
+
+      data[userId].logs.push({
+        start,
+        end,
+        hours: diffHours(start, end),
+      });
+
+      delete data[userId].active;
+      await saveData(data);
+
+      await interaction.editReply(
+        `🔴 **Clocked OUT** — ${diffHours(start, end)}h`
+      );
+      return;
     }
 
-    else if (interaction.commandName === "status") {
-      await interaction.editReply("📊 Status: not implemented yet.");
+    // /status
+    if (interaction.commandName === "status") {
+      if (data[userId]?.active) {
+        await interaction.editReply(
+          `🟡 Clocked IN since:\n\`${data[userId].active}\``
+        );
+        return;
+      }
+
+      await interaction.editReply("⚪ You are NOT clocked in.");
+      return;
     }
 
-    else if (interaction.commandName === "timesheet") {
-      await interaction.editReply("📄 Timesheet coming soon.");
+    // /timesheet
+    if (interaction.commandName === "timesheet") {
+      const logs = data[userId]?.logs || [];
+      if (!logs.length) {
+        await interaction.editReply("📭 No records found.");
+        return;
+      }
+
+      let total = 0;
+      let msg = "🧾 **Your Timesheet**\n";
+
+      logs.forEach((l, idx) => {
+        total += parseFloat(l.hours);
+        msg += `${idx + 1}. ${l.hours}h\n`;
+      });
+
+      msg += `\n⏱ **Total Hours:** ${total.toFixed(2)}h`;
+      await interaction.editReply(msg);
+      return;
     }
 
-    else {
-      await interaction.editReply("❓ Unknown command.");
-    }
+    await interaction.editReply("❓ Unknown command.");
 
   } catch (error) {
     console.error("❌ Interaction error:", error);
@@ -119,71 +177,11 @@ client.on("interactionCreate", async interaction => {
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply("❌ An error occurred.");
     } else {
-      await interaction.reply({ content: "❌ An error occurred.", ephemeral: true });
+      await interaction.reply({
+        content: "❌ An error occurred.",
+        ephemeral: true,
+      });
     }
-  }
-});
-
-
-
-  const userId = i.user.id;
-  const data = await loadData();
-
-  // /clockin
-  if (i.commandName === "clockin") {
-    if (data[userId]?.active)
-      return i.reply({ content: "❌ You are already clocked in.", ephemeral: true });
-
-    data[userId] = data[userId] || { logs: [] };
-    data[userId].active = nowISO();
-
-    await saveData(data);
-    return i.reply("🟢 **Clocked IN successfully**");
-  }
-
-  // /clockout
-  if (i.commandName === "clockout") {
-    if (!data[userId]?.active)
-      return i.reply({ content: "❌ You are not clocked in.", ephemeral: true });
-
-    const start = data[userId].active;
-    const end = nowISO();
-
-    data[userId].logs.push({
-      start,
-      end,
-      hours: diffHours(start, end),
-    });
-
-    delete data[userId].active;
-    await saveData(data);
-
-    return i.reply(`🔴 **Clocked OUT** — ${diffHours(start, end)}h`);
-  }
-
-  // /status
-  if (i.commandName === "status") {
-    if (data[userId]?.active)
-      return i.reply(`🟡 Clocked IN since:\n\`${data[userId].active}\``);
-
-    return i.reply("⚪ You are NOT clocked in.");
-  }
-
-  // /timesheet
-  if (i.commandName === "timesheet") {
-    const logs = data[userId]?.logs || [];
-    if (!logs.length) return i.reply("📭 No records found.");
-
-    let total = 0;
-    let msg = "🧾 **Your Timesheet**\n";
-
-    logs.forEach((l, idx) => {
-      total += parseFloat(l.hours);
-      msg += `${idx + 1}. ${l.hours}h\n`;
-    });
-
-    msg += `\n⏱ **Total Hours:** ${total.toFixed(2)}h`;
-    return i.reply(msg);
   }
 });
 
