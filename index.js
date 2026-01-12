@@ -2,10 +2,6 @@ import { Client, GatewayIntentBits } from "discord.js";
 import fs from "fs/promises";
 import fetch from "node-fetch";
 import { startKeepAlive } from "./keepAlive.js";
-import { execSync } from "child_process";
-
-
-
 
 // =======================
 // CONFIG
@@ -38,13 +34,16 @@ try {
   users = {};
 }
 
-function getCommitId() {
-  try {
-    return execSync("git rev-parse --short HEAD").toString().trim();
-  } catch {
-    return "unknown";
-  }
+const members = await interaction.guild.members.fetch();
+
+for (const [id, m] of members) {
+  users[id] ??= {
+    username: m.user.username,
+    name: ""
+  };
 }
+
+await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
 
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
@@ -91,63 +90,6 @@ function parseDate(str, end = false) {
   if (end) date.setHours(23, 59, 59, 999);
   return date;
 }
-
-function getHardName(userId, interaction = null) {
-  // ABSOLUTE SAFETY NET
-  if (!userId) {
-    console.error("❌ getHardName called with undefined userId");
-    return "Unknown User";
-  }
-
-  try {
-    // 1️⃣ users.json custom name
-    if (users?.[userId]?.name?.trim()) {
-      return users[userId].name;
-    }
-
-    // 2️⃣ Cached guild member
-    const member =
-      interaction?.guild?.members?.cache?.get(userId);
-
-    if (member?.nickname) {
-      return member.nickname;
-    }
-
-    if (member?.user?.username) {
-      return member.user.username;
-    }
-
-    // 3️⃣ Stored username
-    if (users?.[userId]?.username) {
-      return users[userId].username;
-    }
-
-    throw new Error("HardName resolution failed");
-  } catch (err) {
-    console.error(`❌ HardName error for user ${userId}:`, err.message);
-    return `Unknown (${userId})`;
-  }
-}
-
-
-    // ❌ Nothing worked
-    throw new Error("HardName resolution failed");
-  } catch (err) {
-    console.error(`❌ HardName error for user ${userId}:`, err.message);
-
-    // Send user-facing warning ONLY if interaction exists
-    if (interaction && !interaction.replied && !interaction.deferred) {
-      interaction.reply({
-        content:
-          "⚠️ Unable to resolve your display name. Using fallback ID.",
-        ephemeral: true,
-      }).catch(() => {});
-    }
-
-    return `Unknown User (${userId})`;
-  }
-}
-
 
 function formatElapsedLive(startISO) {
   const diff = Date.now() - new Date(startISO).getTime();
@@ -298,7 +240,7 @@ client.on("interactionCreate", async interaction => {
   await interaction.deferReply();
   
   const userId = interaction.user.id;
-  const displayName = getHardName(userId, interaction);
+  const displayName = getHardName(userId);
   
   timesheet[userId] ??= { logs: [], name: displayName };
   timesheet[userId].name = displayName;
@@ -352,7 +294,7 @@ client.on("interactionCreate", async interaction => {
       title: "🟢 Clocked In",
       color: 0x2ecc71,
       fields: [
-        { name: "👤 User", value: getHardName(userId, interaction), inline: true },
+        { name: "👤 User", value: getHardName(userId), inline: true },
         { name: "📍 Voice Channel", value: voiceChannel, inline: true },
         { name: "⏱ Start Time", value: formatDate(start), inline: false },
       ],
@@ -395,7 +337,7 @@ client.on("interactionCreate", async interaction => {
       title: "🔴 Clocked Out",
       color: 0xe74c3c,
       fields: [
-        { name: "👤 User", value: getHardName(userId, interaction), inline: true },
+        { name: "👤 User", value: getHardName(userId), inline: true },
         { name: "📍 Voice Channel", value: voiceChannel, inline: true },
         { name: "▶️ Started", value: formatDate(start), inline: false },
         { name: "⏹ Ended", value: formatDate(end), inline: false },
@@ -428,7 +370,7 @@ client.on("interactionCreate", async interaction => {
         title: "🟢 Status: Clocked In",
         color: 0x2ecc71,
         fields: [
-          { name: "👤 User", value: getHardName(userId, interaction), inline: true },
+          { name: "👤 User", value: getHardName(userId), inline: true },
           {
             name: "📍 Voice Channel",
             value:
@@ -487,7 +429,7 @@ client.on("interactionCreate", async interaction => {
       title: "⚪ Status: Clocked Out",
       color: 0x95a5a6,
       fields: [
-        { name: "👤 User", value: getHardName(userId, interaction), inline: true },
+        { name: "👤 User", value: getHardName(userId), inline: true },
         {
           name: "⏱ Total Recorded Time",
           value: `${Math.round(total * 100) / 100}h`,
@@ -537,6 +479,13 @@ client.on("interactionCreate", async interaction => {
     const target =
       interaction.options.getMember("user") || interaction.member;
     
+    const targetName =
+      target?.displayName ||
+      target?.user?.globalName ||
+      target?.user?.username ||
+      timesheet[target.id]?.name ||
+      "Unknown User";
+    
     const startStr = interaction.options.getString("start");
     const endStr   = interaction.options.getString("end");
     
@@ -574,13 +523,11 @@ client.on("interactionCreate", async interaction => {
         ? `${startStr || "Beginning"} → ${endStr || "Now"}`
         : "All time";
     
-    const targetName = getHardName(target.id);
-    
     const embed = {
       title: "🧾 Timesheet",
       color: 0x3498db,
       fields: [
-        { name: "👤 User", value: targetName, inline: true },
+        const targetName = getHardName(target.id);
         { name: "📅 Range", value: rangeLabel, inline: true },
         { name: "🧮 Sessions", value: String(count), inline: true },
         {
@@ -597,7 +544,6 @@ client.on("interactionCreate", async interaction => {
       footer: { text: "Time Tracker" },
       timestamp: new Date().toISOString(),
     };
-
     
     return interaction.editReply({ embeds: [embed] });
   }
@@ -606,10 +552,13 @@ client.on("interactionCreate", async interaction => {
 // =======================
 // STARTUP
 // =======================
-client.once("ready", async () => {
+(async () => {
+  startKeepAlive();
+  await loadFromGitHub();
+  await client.login(process.env.DISCORD_TOKEN);
+  client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 
-  const commitId = getCommitId();
   const guild = client.guilds.cache.first();
   if (!guild) {
     console.warn("⚠ No guild found");
@@ -619,20 +568,14 @@ client.once("ready", async () => {
   const members = await guild.members.fetch();
 
   for (const [id, m] of members) {
-    users[id] ??= {};
-
-    users[id].username = m.user.username;
-    users[id].lastSeen = new Date().toISOString();
-    users[id].commit = commitId;
-
-    // preserve hardcoded name if exists
-    users[id].name ??= "";
+    users[id] ??= {
+      username: m.user.username,
+      name: "" // YOU fill this manually
+    };
   }
 
-  await fs.writeFile(
-    USERS_FILE,
-    JSON.stringify(users, null, 2)
-  );
-
-  console.log("✅ users.json synced with commit:", commitId);
+  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2));
+  console.log("✅ users.json synced");
 });
+
+})();
