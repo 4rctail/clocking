@@ -86,8 +86,34 @@ async function syncGitHub() {
 // =======================
 // SLASH COMMAND HANDLER
 // =======================
-client.on("interactionCreate", async (i) => {
-  if (!i.isChatInputCommand()) return;
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  try {
+    if (interaction.commandName === "clockin") {
+      await interaction.reply("🕒 You are now clocked in!");
+    }
+
+    else if (interaction.commandName === "clockout") {
+      await interaction.reply("🕔 You are now clocked out!");
+    }
+
+    else if (interaction.commandName === "status") {
+      await interaction.reply("📊 Status: Not implemented yet.");
+    }
+
+    else if (interaction.commandName === "timesheet") {
+      await interaction.reply("📄 Timesheet feature coming soon.");
+    }
+
+  } catch (err) {
+    console.error(err);
+    if (!interaction.replied) {
+      await interaction.reply({ content: "❌ Error handling command.", ephemeral: true });
+    }
+  }
+});
+
 
   const userId = i.user.id;
   const data = await loadData();
