@@ -45,6 +45,15 @@ function formatSession(startISO, endISO) {
   return `${datePart}, ${timePart}`;
 }
 
+function parseDate(str, end = false) {
+  if (!str) return null;
+  const [m, d, y] = str.split("/").map(Number);
+  if (!m || !d || !y) return null;
+
+  const date = new Date(y, m - 1, d);
+  if (end) date.setHours(23, 59, 59, 999);
+  return date;
+}
 
 // =======================
 // IN-MEMORY STATE
@@ -282,30 +291,73 @@ client.on("interactionCreate", async interaction => {
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
-    if (!hasManagerRole(interaction.member)) {
-      return interaction.editReply("❌ Only managers can view timesheets.");
+    const sub = interaction.options.getSubcommand(false);
+  
+    // ===== RESET (MANAGER ONLY) =====
+    if (sub === "reset") {
+      if (!hasManagerRole(interaction.member))
+        return interaction.editReply("❌ Managers only.");
+  
+      let history = {};
+      try {
+        history = JSON.parse(
+          await fs.readFile("./timesheetHistory.json", "utf8")
+        );
+      } catch {}
+  
+      const stamp = new Date().toISOString();
+      history[stamp] = timesheet;
+  
+      await fs.writeFile(
+        "./timesheetHistory.json",
+        JSON.stringify(history, null, 2)
+      );
+  
+      timesheet = {};
+      await persist();
+  
+      return interaction.editReply("✅ Timesheet reset & archived.");
     }
   
-    const logs = timesheet[userId]?.logs || [];
+    // ===== VIEW =====
+    const target =
+      interaction.options.getMember("user") || interaction.member;
+  
+    const startStr = interaction.options.getString("start");
+    const endStr   = interaction.options.getString("end");
+  
+    const start = parseDate(startStr);
+    const end   = parseDate(endStr, true);
+  
+    const logs = timesheet[target.id]?.logs || [];
     if (!logs.length)
       return interaction.editReply("📭 No records found.");
   
-    let msg = `🧾 Timesheet — ${displayName}\n\n`;
+    let msg = `🧾 Timesheet — ${target.displayName}\n\n`;
     let total = 0;
+    let i = 1;
   
-    logs.forEach((l, i) => {
+    for (const l of logs) {
+      const s = new Date(l.start);
+      if ((start && s < start) || (end && s > end)) continue;
+  
       const hours =
         (new Date(l.end) - new Date(l.start)) / 3600000;
   
       total += hours;
-      msg += `${i + 1}. ${formatSession(l.start, l.end)}\n`;
-    });
+      msg += `${i}. ${formatSession(l.start, l.end)} (${hours.toFixed(2)}h)\n`;
+      i++;
+    }
   
-    const safeTotal = Math.floor(total * 100) / 100;
-    msg += `\n⏱ Total hours: ${safeTotal}`;
+    if (i === 1)
+      return interaction.editReply("📭 No sessions in range.");
   
+    const exactTotal = Math.floor(total * 100) / 100;
+  
+    msg += `\n⏱ Total: ${exactTotal}h`;
     return interaction.editReply(msg);
   }
+
   
 });
 // =======================
