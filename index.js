@@ -14,13 +14,17 @@ const __dirname = path.dirname(__filename);
 // =======================
 // CLIENT
 // =======================
+import { GatewayIntentBits } from "discord.js";
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences,
     GatewayIntentBits.GuildVoiceStates
   ]
 });
+
 
 
 // =======================
