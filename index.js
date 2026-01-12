@@ -470,13 +470,6 @@ client.on("interactionCreate", async interaction => {
     const target =
       interaction.options.getMember("user") || interaction.member;
     
-    const targetName =
-      target?.displayName ||
-      target?.user?.globalName ||
-      target?.user?.username ||
-      timesheet[target.id]?.name ||
-      "Unknown User";
-    
     const startStr = interaction.options.getString("start");
     const endStr   = interaction.options.getString("end");
     
@@ -560,7 +553,7 @@ client.once("ready", async () => {
   for (const [id, m] of members) {
     users[id] ??= {
       username: m.user.username,
-      name: "" // YOU fill this manually
+      name: ""
     };
   }
 
@@ -572,8 +565,4 @@ client.once("ready", async () => {
   startKeepAlive();
   await loadFromGitHub();
   await client.login(process.env.DISCORD_TOKEN);
-})();
-
-});
-
 })();
