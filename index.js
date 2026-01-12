@@ -1,38 +1,48 @@
-import { Client, GatewayIntentBits, Collection } from "discord.js";
-import fs from "fs";
-import path from "path";
-import process from "process";
+import { Client, GatewayIntentBits } from "discord.js";
+import http from "http";
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+// ─────────────────────────────────────────────
+// Keep-alive server (Render requirement)
+// ─────────────────────────────────────────────
+http.createServer((_, res) => {
+  res.writeHead(200);
+  res.end("OK");
+}).listen(10000, () => {
+  console.log("🌐 Keep-alive server on port 10000");
 });
 
-client.commands = new Collection();
+// ─────────────────────────────────────────────
+// TOKEN DIAGNOSTICS (SAFE)
+// ─────────────────────────────────────────────
+console.log("🔍 TOKEN TYPE:", typeof process.env.DISCORD_TOKEN);
+console.log("🔍 TOKEN LENGTH:", process.env.DISCORD_TOKEN?.length);
 
-const commandsPath = "./commands";
-const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith(".js"));
-
-for (const file of commandFiles) {
-  const cmd = await import(`./commands/${file}`);
-  client.commands.set(cmd.default.name, cmd.default);
+// HARD FAIL IF TOKEN IS MISSING
+if (!process.env.DISCORD_TOKEN) {
+  console.error("❌ DISCORD_TOKEN IS MISSING AT RUNTIME");
+  process.exit(1);
 }
 
-client.once("clientReady", () => {
+// ─────────────────────────────────────────────
+// Discord Client
+// ─────────────────────────────────────────────
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds
+  ]
+});
+
+// Ready event (v14+ compatible)
+client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  const command = client.commands.get(interaction.commandName);
-  if (!command) return;
-
-  try {
-    await command.execute(interaction);
-  } catch (err) {
-    console.error(err);
-    // 🚫 DO NOT reply here — interaction may already be handled
-  }
+// Error visibility
+client.on("error", err => {
+  console.error("❌ CLIENT ERROR:", err);
 });
 
+// ─────────────────────────────────────────────
+// LOGIN
+// ─────────────────────────────────────────────
 client.login(process.env.DISCORD_TOKEN);
