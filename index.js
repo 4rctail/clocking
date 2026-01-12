@@ -24,97 +24,111 @@ const client = new Client({
 });
 
 // =======================
-// IN-MEMORY CACHE (CRITICAL)
+// IN-MEMORY STATE
 // =======================
-let timesheetCache = {};
-let gitSyncTimer = null;
+let timesheet = {};
+let gitCommitTimer = null;
 
 // =======================
 // TIME HELPERS
 // =======================
 const nowISO = () => new Date().toISOString();
+
 const diffHours = (s, e) =>
   ((new Date(e) - new Date(s)) / 3600000).toFixed(2);
 
 const formatDate = iso => new Date(iso).toLocaleString();
+
+function elapsed(startISO) {
+  const ms = Date.now() - new Date(startISO).getTime();
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return `${h}h ${m}m`;
+}
 
 // =======================
 // GITHUB LOAD (SAFE)
 // =======================
 async function loadFromGitHub() {
   if (!GIT_TOKEN) {
-    timesheetCache = {};
+    console.warn("⚠ GIT_TOKEN missing, GitHub sync disabled");
     return;
   }
 
-  const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/timesheet.json?ref=${GIT_BRANCH}`;
+  const url = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/timesheet.json?ref=${GIT_BRANCH}`;
 
-  try {
-    const res = await fetch(api, {
-      headers: { Authorization: `Bearer ${GIT_TOKEN}` },
-    });
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${GIT_TOKEN}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "clocking-bot",
+    },
+  });
 
-    if (!res.ok) {
-      console.warn("⚠ No timesheet on GitHub yet, creating new one");
-      timesheetCache = {};
-      await persist();
-      return;
-    }
-
-    const json = await res.json();
-    const decoded = Buffer.from(json.content, "base64").toString("utf8");
-
-    timesheetCache = JSON.parse(decoded);
-    await fs.writeFile(DATA_FILE, decoded);
-
-    console.log("✅ Loaded timesheet from GitHub");
-  } catch (err) {
-    console.error("❌ GitHub load failed, using local cache", err);
-    timesheetCache = {};
+  if (!res.ok) {
+    console.warn("⚠ No timesheet.json on GitHub yet");
+    timesheet = {};
+    await persist(); // create file on GitHub
+    return;
   }
+
+  const json = await res.json();
+  const decoded = Buffer.from(json.content, "base64").toString("utf8");
+
+  timesheet = JSON.parse(decoded);
+  await fs.writeFile(DATA_FILE, decoded);
+
+  console.log("✅ Loaded timesheet from GitHub");
 }
 
 // =======================
-// SAVE (DEBOUNCED GITHUB SYNC)
+// PERSIST (DISK + QUEUED GIT)
 // =======================
 async function persist() {
-  await fs.writeFile(DATA_FILE, JSON.stringify(timesheetCache, null, 2));
-  queueGitSync();
+  await fs.writeFile(DATA_FILE, JSON.stringify(timesheet, null, 2));
+  queueGitCommit();
 }
 
-function queueGitSync() {
-  if (gitSyncTimer) return;
+function queueGitCommit() {
+  if (gitCommitTimer) return;
 
-  gitSyncTimer = setTimeout(async () => {
-    gitSyncTimer = null;
-    await syncGitHub();
-  }, 3000); // debounce
+  gitCommitTimer = setTimeout(async () => {
+    gitCommitTimer = null;
+    await commitToGitHub();
+  }, 3000);
 }
 
 // =======================
-// GITHUB SYNC (FAST & SAFE)
+// GITHUB COMMIT (FIXED)
 // =======================
-async function syncGitHub() {
+async function commitToGitHub() {
   if (!GIT_TOKEN) return;
 
   const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/timesheet.json`;
   const content = Buffer.from(
-    JSON.stringify(timesheetCache, null, 2)
+    JSON.stringify(timesheet, null, 2)
   ).toString("base64");
 
   let sha = null;
+
   const get = await fetch(api, {
-    headers: { Authorization: `Bearer ${GIT_TOKEN}` },
+    headers: {
+      Authorization: `Bearer ${GIT_TOKEN}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "clocking-bot",
+    },
   });
 
   if (get.ok) {
     sha = (await get.json()).sha;
   }
 
-  await fetch(api, {
+  const put = await fetch(api, {
     method: "PUT",
     headers: {
       Authorization: `Bearer ${GIT_TOKEN}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "clocking-bot",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -125,7 +139,13 @@ async function syncGitHub() {
     }),
   });
 
-  console.log("✅ Timesheet synced to GitHub");
+  if (!put.ok) {
+    const err = await put.text();
+    console.error("❌ GitHub commit failed:", err);
+    return;
+  }
+
+  console.log("✅ Timesheet committed to GitHub");
 }
 
 // =======================
@@ -139,17 +159,17 @@ client.on("interactionCreate", async interaction => {
   const userId = member.id;
   const displayName = member.nickname || member.user.username;
 
-  timesheetCache[userId] ??= { logs: [] };
+  timesheet[userId] ??= { logs: [] };
 
   // -------- CLOCK IN --------
   if (interaction.commandName === "clockin") {
     if (!member.voice.channelId)
       return interaction.editReply("❌ Join voice first.");
 
-    if (timesheetCache[userId].active)
+    if (timesheet[userId].active)
       return interaction.editReply("❌ Already clocked in.");
 
-    timesheetCache[userId].active = nowISO();
+    timesheet[userId].active = nowISO();
     await persist();
 
     return interaction.editReply("🟢 Clocked IN");
@@ -157,46 +177,51 @@ client.on("interactionCreate", async interaction => {
 
   // -------- CLOCK OUT --------
   if (interaction.commandName === "clockout") {
-    const active = timesheetCache[userId].active;
-    if (!active)
+    const start = timesheet[userId].active;
+    if (!start)
       return interaction.editReply("❌ Not clocked in.");
 
     const end = nowISO();
-    timesheetCache[userId].logs.push({
-      start: active,
+    timesheet[userId].logs.push({
+      start,
       end,
-      hours: diffHours(active, end),
+      hours: diffHours(start, end),
     });
 
-    delete timesheetCache[userId].active;
+    delete timesheet[userId].active;
     await persist();
 
     return interaction.editReply(
-      `🔴 Clocked OUT — ${diffHours(active, end)}h`
+      `🔴 Clocked OUT — ${diffHours(start, end)}h`
     );
   }
 
-  // -------- STATUS --------
+  // -------- STATUS (FIXED) --------
   if (interaction.commandName === "status") {
-    if (timesheetCache[userId].active) {
+    if (timesheet[userId].active) {
       return interaction.editReply(
-        `🟢 CLOCKED IN\n👤 ${displayName}`
+        `🟢 CLOCKED IN\n` +
+        `👤 ${displayName}\n` +
+        `⏱ Started: ${formatDate(timesheet[userId].active)}\n` +
+        `⌛ Elapsed: ${elapsed(timesheet[userId].active)}`
       );
     }
 
-    const total = timesheetCache[userId].logs.reduce(
+    const total = timesheet[userId].logs.reduce(
       (t, l) => t + parseFloat(l.hours),
       0
     );
 
     return interaction.editReply(
-      `⚪ CLOCKED OUT\n👤 ${displayName}\n⏱ Total hours: ${total.toFixed(2)}h`
+      `⚪ CLOCKED OUT\n` +
+      `👤 ${displayName}\n` +
+      `⏱ Total hours: ${total.toFixed(2)}h`
     );
   }
 
-  // -------- TIMESHEET (FIXED) --------
+  // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
-    const logs = timesheetCache[userId].logs;
+    const logs = timesheet[userId].logs;
     if (!logs.length)
       return interaction.editReply("📭 No records found.");
 
