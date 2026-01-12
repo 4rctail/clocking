@@ -18,21 +18,10 @@ export default {
   name: "clockin",
 
   async execute(interaction) {
-    // MUST be in a guild
+    // Must be in a guild
     if (!interaction.inGuild()) {
       return interaction.reply({
-        content: "❌ This command can only be used in a server.",
-        ephemeral: true
-      });
-    }
-
-    // 🔴 THIS IS THE KEY LINE — DO NOT CHANGE IT
-    const voiceChannel = interaction.member.voice.channel;
-
-    if (!voiceChannel) {
-      return interaction.reply({
-        content: "❌ You must be **in a voice channel** to clock in.",
-        ephemeral: true
+        content: "❌ This command can only be used in a server."
       });
     }
 
@@ -43,21 +32,18 @@ export default {
 
     if (data[uid].active) {
       return interaction.reply({
-        content: "❌ You are already clocked in.",
-        ephemeral: true
+        content: "❌ You are already clocked in."
       });
     }
 
     data[uid].active = {
-      time: new Date().toISOString(),
-      channel: voiceChannel.id
+      time: new Date().toISOString()
     };
 
     await write(data);
 
     return interaction.reply({
-      content: `🟢 **CLOCKED IN**\n📢 Voice: **${voiceChannel.name}**`,
-      ephemeral: true
+      content: "🟢 **CLOCKED IN**"
     });
   }
 };
