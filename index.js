@@ -68,6 +68,15 @@ function formatSession(startISO, endISO) {
   return `${datePart}, ${timePart}`;
 }
 
+async function loadFromDisk() {
+  try {
+    const raw = await fs.readFile(DATA_FILE, "utf8");
+    timesheet = JSON.parse(raw);
+  } catch {
+    timesheet = {};
+  }
+}
+
 
 function parseDate(str, end = false) {
   if (!str) return null;
@@ -263,24 +272,22 @@ client.on("interactionCreate", async interaction => {
     // -------- TOTAL HOURS (ALL USERS) --------
     // -------- TOTAL HOURS (ALL USERS) --------
     if (interaction.commandName === "totalhr") {
+      await loadFromDisk(); // 🔒 authoritative read
+    
       let lines = [];
     
       for (const [uid, u] of Object.entries(timesheet)) {
-        // HARD GUARD — skip invalid users
         if (!u || !Array.isArray(u.logs) || u.logs.length === 0) continue;
     
         let total = 0;
         for (const l of u.logs) {
-          if (typeof l.hours === "number") {
-            total += l.hours;
-          }
+          if (typeof l.hours === "number") total += l.hours;
         }
     
         total = Math.round(total * 100) / 100;
         if (total <= 0) continue;
     
         let name = u.name || "Unknown";
-    
         try {
           const m = await interaction.guild.members.fetch(uid);
           name = m.displayName || m.user.username;
@@ -298,6 +305,7 @@ client.on("interactionCreate", async interaction => {
       );
     }
     
+        
 
 
   // -------- CLOCK IN --------
@@ -508,80 +516,79 @@ client.on("interactionCreate", async interaction => {
     // ===== VIEW =====
     // ===== VIEW (EMBED) =====
     const target =
-      interaction.options.getMember("user") || interaction.member;
-    
-    const targetName =
-      target?.displayName ||
-      target?.user?.globalName ||
-      target?.user?.username ||
-      timesheet[target.id]?.name ||
-      "Unknown User";
-    
-    const startStr = interaction.options.getString("start");
-    const endStr   = interaction.options.getString("end");
-    
-    const start = parseDate(startStr);
-    const end   = parseDate(endStr, true);
-    
-    if (!timesheet[target.id] || !timesheet[target.id].logs?.length) {
-      return interaction.editReply("📭 No records found.");
-    }
-
-    let total = 0;
-    let lines = [];
-    let count = 0;
-    
-    const logs = timesheet[target.id].logs;
-    
-    for (const l of logs) {
-
-      const s = new Date(l.start);
-      if ((start && s < start) || (end && s > end)) continue;
-    
-      const hours =
-        (new Date(l.end) - new Date(l.start)) / 3600000;
-    
-      total += hours;
-      count++;
-    
-      lines.push(
-        `**${count}.** ${formatSession(l.start, l.end)} — **${Math.round(hours * 100) / 100}h**`
-      );
-    }
-    
-    if (!count)
-      return interaction.editReply("📭 No sessions in range.");
-    
-    const rangeLabel =
-      startStr || endStr
-        ? `${startStr || "Beginning"} → ${endStr || "Now"}`
-        : "All time";
-    
-    const embed = {
-      title: "🧾 Timesheet",
-      color: 0x3498db,
-      fields: [
-        { name: "👤 User", value: targetName, inline: true },
-        { name: "📅 Range", value: rangeLabel, inline: true },
-        { name: "🧮 Sessions", value: String(count), inline: true },
-        {
-          name: "⏱ Total Hours",
-          value: `${Math.round(total * 100) / 100}h`,
-          inline: true,
-        },
-        {
-          name: "📋 Logs",
-          value: lines.join("\n"),
-          inline: false,
-        },
-      ],
-      footer: { text: "Time Tracker" },
-      timestamp: new Date().toISOString(),
-    };
-    
-    return interaction.editReply({ embeds: [embed] });
-  }
-});
+      await loadFromDisk(); // 🔒 authoritative read
+      
+        const target =
+          interaction.options.getMember("user") || interaction.member;
+      
+        const userData = timesheet[target.id];
+        if (!userData || !Array.isArray(userData.logs) || userData.logs.length === 0) {
+          return interaction.editReply("📭 No records found.");
+        }
+      
+        const targetName =
+          target.displayName ||
+          userData.name ||
+          "Unknown User";
+      
+        const startStr = interaction.options.getString("start");
+        const endStr   = interaction.options.getString("end");
+      
+        const start = parseDate(startStr);
+        const end   = parseDate(endStr, true);
+      
+        let total = 0;
+        let lines = [];
+        let count = 0;
+      
+        for (const l of userData.logs) {
+          const s = new Date(l.start);
+          if ((start && s < start) || (end && s > end)) continue;
+      
+          const hours =
+            (new Date(l.end) - new Date(l.start)) / 3600000;
+      
+          total += hours;
+          count++;
+      
+          lines.push(
+            `**${count}.** ${formatSession(l.start, l.end)} — **${Math.round(hours * 100) / 100}h**`
+          );
+        }
+      
+        if (!count) {
+          return interaction.editReply("📭 No sessions in range.");
+        }
+      
+        const rangeLabel =
+          startStr || endStr
+            ? `${startStr || "Beginning"} → ${endStr || "Now"}`
+            : "All time";
+      
+        return interaction.editReply({
+          embeds: [{
+            title: "🧾 Timesheet",
+            color: 0x3498db,
+            fields: [
+              { name: "👤 User", value: targetName, inline: true },
+              { name: "📅 Range", value: rangeLabel, inline: true },
+              { name: "🧮 Sessions", value: String(count), inline: true },
+              {
+                name: "⏱ Total Hours",
+                value: `${Math.round(total * 100) / 100}h`,
+                inline: true,
+              },
+              {
+                name: "📋 Logs",
+                value: lines.join("\n"),
+                inline: false,
+              },
+            ],
+            footer: { text: "Time Tracker" },
+            timestamp: new Date().toISOString(),
+          }],
+        });
+      }
 
 // =======================
 // STARTUP
