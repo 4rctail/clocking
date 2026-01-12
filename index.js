@@ -107,6 +107,9 @@ async function syncFile(file) {
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
+  // 🔒 ALWAYS DEFER ONCE — prevents 40060 forever
+  await interaction.deferReply();
+
   const member = interaction.member;
   const timesheet = await readJSON(ACTIVE_FILE);
   const history   = await readJSON(HISTORY_FILE);
@@ -119,17 +122,17 @@ client.on("interactionCreate", async interaction => {
     timesheet[uid] ??= { logs: [] };
 
     if (!member.voice?.channelId)
-      return interaction.reply("❌ Join voice first.");
+      return interaction.editReply("❌ Join voice first.");
 
     if (timesheet[uid].active)
-      return interaction.reply("❌ Already clocked in.");
+      return interaction.editReply("❌ Already clocked in.");
 
     timesheet[uid].active = new Date().toISOString();
 
     await writeJSON(ACTIVE_FILE, timesheet);
     await syncFile("timesheet.json");
 
-    return interaction.reply("🟢 CLOCKED IN");
+    return interaction.editReply("🟢 CLOCKED IN");
   }
 
   // =======================
@@ -140,7 +143,7 @@ client.on("interactionCreate", async interaction => {
     const data = timesheet[uid];
 
     if (!data?.active)
-      return interaction.reply("❌ Not clocked in.");
+      return interaction.editReply("❌ Not clocked in.");
 
     const end = new Date().toISOString();
     data.logs.push({
@@ -154,7 +157,7 @@ client.on("interactionCreate", async interaction => {
     await writeJSON(ACTIVE_FILE, timesheet);
     await syncFile("timesheet.json");
 
-    return interaction.reply("🔴 CLOCKED OUT");
+    return interaction.editReply("🔴 CLOCKED OUT");
   }
 
   // =======================
@@ -192,7 +195,7 @@ client.on("interactionCreate", async interaction => {
         }
       }
 
-      return interaction.reply(
+      return interaction.editReply(
         `👤 **${interaction.guild.members.cache.get(uid)?.displayName || user.username}**\n` +
         `⏱ **${grandTotal.toFixed(2)}h**\n\n` +
         (sessions
@@ -201,6 +204,11 @@ client.on("interactionCreate", async interaction => {
       );
     }
   }
+
+  // =======================
+  // FALLBACK
+  // =======================
+  return interaction.editReply("❌ Unknown command.");
 });
 
 // =======================
