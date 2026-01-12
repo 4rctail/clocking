@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import { MessageFlags } from "discord.js";
 
 const FILE = "./timesheet.json";
 
@@ -18,10 +19,10 @@ export default {
   name: "clockin",
 
   async execute(interaction) {
-    // Must be in a guild
     if (!interaction.inGuild()) {
-      return interaction.reply({
-        content: "❌ This command can only be used in a server."
+      return interaction.editReply({
+        content: "❌ This command can only be used in a server.",
+        flags: MessageFlags.Ephemeral
       });
     }
 
@@ -31,8 +32,9 @@ export default {
     data[uid] ??= {};
 
     if (data[uid].active) {
-      return interaction.reply({
-        content: "❌ You are already clocked in."
+      return interaction.editReply({
+        content: "❌ You are already clocked in.",
+        flags: MessageFlags.Ephemeral
       });
     }
 
@@ -42,8 +44,9 @@ export default {
 
     await write(data);
 
-    return interaction.reply({
-      content: "🟢 **CLOCKED IN**"
+    return interaction.editReply({
+      content: "🟢 **CLOCKED IN**",
+      flags: MessageFlags.Ephemeral
     });
   }
 };
