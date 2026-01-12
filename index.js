@@ -19,6 +19,7 @@ const GIT_BRANCH = process.env.GIT_BRANCH || "main";
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildVoiceStates,
   ],
 });
