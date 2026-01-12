@@ -26,16 +26,6 @@ const client = new Client({
 
 
 
-function resolveDisplayName(interaction, member) {
-  if (member?.displayName) return member.displayName;
-  if (member?.nickname) return member.nickname;
-  if (member?.user?.globalName) return member.user.globalName;
-  if (member?.user?.username) return member.user.username;
-  return interaction.user.globalName
-      || interaction.user.username
-      || "Unknown User";
-}
-
 function formatSession(startISO, endISO) {
   const s = new Date(startISO);
   const e = new Date(endISO);
