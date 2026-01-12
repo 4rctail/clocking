@@ -1,43 +1,26 @@
 import { Client, GatewayIntentBits, Collection } from "discord.js";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-import { startKeepAlive } from "./keepAlive.js";
+import process from "process";
 
-// =======================
-// PATH FIX (ESM)
-// =======================
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// =======================
-// CLIENT
-// =======================
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates
-  ],
+  intents: [GatewayIntentBits.Guilds]
 });
 
-// =======================
-// COMMAND HANDLER
-// =======================
 client.commands = new Collection();
 
-const commandsPath = path.join(__dirname, "commands");
-const commandFiles = fs
-  .readdirSync(commandsPath)
-  .filter(file => file.endsWith(".js"));
+const commandsPath = "./commands";
+const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith(".js"));
 
 for (const file of commandFiles) {
-  const command = await import(`./commands/${file}`);
-  client.commands.set(command.default.name, command.default);
+  const cmd = await import(`./commands/${file}`);
+  client.commands.set(cmd.default.name, cmd.default);
 }
 
-// =======================
-// INTERACTIONS
-// =======================
+client.once("clientReady", () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+});
+
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -47,23 +30,9 @@ client.on("interactionCreate", async interaction => {
   try {
     await command.execute(interaction);
   } catch (err) {
-    console.error(`❌ Command Error: ${interaction.commandName}`, err);
-
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply("❌ An internal error occurred.");
-    }
+    console.error(err);
+    // 🚫 DO NOT reply here — interaction may already be handled
   }
 });
 
-// =======================
-// READY
-// =======================
-client.once("ready", () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-});
-
-// =======================
-// START
-// =======================
-startKeepAlive();
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login(process.env.DISCORD_TOKEN);
