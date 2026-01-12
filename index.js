@@ -47,13 +47,28 @@ function formatSession(startISO, endISO) {
 
 function parseDate(str, end = false) {
   if (!str) return null;
-  const [m, d, y] = str.split("/").map(Number);
-  if (!m || !d || !y) return null;
+
+  // REMOVE commas, trim spaces
+  str = str.replace(/,/g, "").trim();
+
+  const parts = str.split("/");
+  if (parts.length !== 3) return null;
+
+  const m = Number(parts[0]);
+  const d = Number(parts[1]);
+  const y = Number(parts[2]);
+
+  if (
+    !Number.isInteger(m) ||
+    !Number.isInteger(d) ||
+    !Number.isInteger(y)
+  ) return null;
 
   const date = new Date(y, m - 1, d);
   if (end) date.setHours(23, 59, 59, 999);
   return date;
 }
+
 
 // =======================
 // IN-MEMORY STATE
