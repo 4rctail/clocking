@@ -87,32 +87,43 @@ async function syncGitHub() {
 // SLASH COMMAND HANDLER
 // =======================
 client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
   try {
+    if (!interaction.isChatInputCommand()) return;
+
+    // ✅ INSTANT ACK — prevents "application did not respond"
+    await interaction.deferReply({ ephemeral: true });
+
     if (interaction.commandName === "clockin") {
-      await interaction.reply("🕒 You are now clocked in!");
+      await interaction.editReply("🕒 You are now clocked in!");
     }
 
     else if (interaction.commandName === "clockout") {
-      await interaction.reply("🕔 You are now clocked out!");
+      await interaction.editReply("🕔 You are now clocked out!");
     }
 
     else if (interaction.commandName === "status") {
-      await interaction.reply("📊 Status: Not implemented yet.");
+      await interaction.editReply("📊 Status: not implemented yet.");
     }
 
     else if (interaction.commandName === "timesheet") {
-      await interaction.reply("📄 Timesheet feature coming soon.");
+      await interaction.editReply("📄 Timesheet coming soon.");
     }
 
-  } catch (err) {
-    console.error(err);
-    if (!interaction.replied) {
-      await interaction.reply({ content: "❌ Error handling command.", ephemeral: true });
+    else {
+      await interaction.editReply("❓ Unknown command.");
+    }
+
+  } catch (error) {
+    console.error("❌ Interaction error:", error);
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply("❌ An error occurred.");
+    } else {
+      await interaction.reply({ content: "❌ An error occurred.", ephemeral: true });
     }
   }
 });
+
 
 
   const userId = i.user.id;
