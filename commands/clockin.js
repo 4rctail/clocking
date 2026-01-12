@@ -14,9 +14,15 @@ async function write(data) {
   await fs.writeFile(FILE, JSON.stringify(data, null, 2));
 }
 
-// 🔒 THE ONLY RELIABLE VOICE CHECK
+// 🔒 BULLETPROOF VOICE CHECK
 function getVoiceChannel(interaction) {
-  const voiceState = interaction.guild.voiceStates.cache.get(interaction.user.id);
+  // Must be in a guild
+  if (!interaction.inGuild()) return null;
+
+  const guild = interaction.guild;
+  if (!guild) return null;
+
+  const voiceState = guild.voiceStates.cache.get(interaction.user.id);
   return voiceState?.channel ?? null;
 }
 
@@ -29,7 +35,7 @@ export default {
     const voiceChannel = getVoiceChannel(interaction);
     if (!voiceChannel) {
       return interaction.editReply(
-        "❌ You must be in a **voice channel** to clock in."
+        "❌ You must be **inside a server voice channel** to clock in."
       );
     }
 
@@ -41,7 +47,6 @@ export default {
     }
 
     data[uid].active = new Date().toISOString();
-
     await write(data);
 
     return interaction.editReply(
