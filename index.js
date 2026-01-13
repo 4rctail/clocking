@@ -125,6 +125,13 @@ async function loadFromDisk() {
   }
 }
 
+// Leave a specific guild by ID
+const guild = client.guilds.cache.get("1405067956261621760");
+if (guild) {
+  await guild.leave();
+  console.log(`Left guild: ${guild.name}`);
+}
+
 
 function parseDate(str, end = false) {
   if (!str) return null;
