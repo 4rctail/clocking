@@ -280,28 +280,22 @@ client.on("interactionCreate", async interaction => {
     // -------- TOTAL HOURS (ALL USERS) --------
     // -------- TOTAL HOURS (ALL USERS) --------
     if (interaction.commandName === "totalhr") {
-      await loadFromDisk(); // 🔒 authoritative read
+      await loadFromDisk();
     
       let lines = [];
     
-      for (const [uid, u] of Object.entries(timesheet)) {
-        if (!u || !Array.isArray(u.logs) || u.logs.length === 0) continue;
+      for (const [username, user] of Object.entries(timesheet)) {
+        if (!user?.logs?.length) continue;
     
         let total = 0;
-        for (const l of u.logs) {
+        for (const l of user.logs) {
           if (typeof l.hours === "number") total += l.hours;
         }
     
         total = Math.round(total * 100) / 100;
         if (total <= 0) continue;
     
-        let name = u.name || "Unknown";
-        try {
-          const m = await interaction.guild.members.fetch(uid);
-          name = m.displayName || m.user.username;
-        } catch {}
-    
-        lines.push(`${name} — ${total.toFixed(2)}h`);
+        lines.push(`${username} — ${total.toFixed(2)}h`);
       }
     
       if (!lines.length) {
@@ -312,7 +306,7 @@ client.on("interactionCreate", async interaction => {
         `📊 **Total Hours (All Users)**\n` + lines.join("\n")
       );
     }
-    
+
         
 
 
