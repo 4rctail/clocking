@@ -329,7 +329,7 @@ function hasManagerRole(username) {
 // =======================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: false });
 
   const member =
     interaction.options.getMember("user") ??
