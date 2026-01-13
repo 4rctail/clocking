@@ -25,31 +25,9 @@ const client = new Client({
   ],
 });
 
-
-
 function getGuild(interaction) {
   return interaction.guild ?? client.guilds.cache.first();
 }
-
-client.on("voiceStateUpdate", async (oldState, newState) => {
-  // Joined a voice channel
-  if (!oldState.channel && newState.channel) {
-    const member = newState.member;
-    if (!member) return;
-
-    const username =
-      member.displayName ||
-      member.user?.globalName ||
-      member.user?.username;
-
-    if (voiceCheckTimers.has(username)) {
-      clearTimeout(voiceCheckTimers.get(username));
-      voiceCheckTimers.delete(username);
-
-      console.log(`🟢 Voice timer cancelled for ${username}`);
-    }
-  }
-});
 
 
 function resolveDisplayName(interaction, member) {
@@ -101,15 +79,6 @@ function formatSession(startISO, endISO) {
   return `${datePart}, ${timePart}`;
 }
 
-async function safeChannelSend(interaction, payload) {
-  try {
-    const channel = interaction.channel;
-    if (!channel) return;
-    await channel.send(payload);
-  } catch (err) {
-    console.warn("⚠ Failed to send channel message:", err?.message);
-  }
-}
 
 async function loadFromDisk() {
   try {
@@ -329,7 +298,7 @@ function hasManagerRole(username) {
 // =======================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply();
 
   const member =
     interaction.options.getMember("user") ??
@@ -378,23 +347,9 @@ client.on("interactionCreate", async interaction => {
 
   // -------- CLOCK IN --------
   // -------- CLOCK IN (EMBED) --------
-  // -------- CLOCK IN (VOICE CHECK – FIXED) --------
   if (interaction.commandName === "clockin") {
     const username = getUsername(interaction);
   
-    // ✅ USE THE SAME LOGIC AS AUTO-CLOCKOUT
-    const voiceChannel = interaction.member?.voice?.channel;
-  
-    if (!voiceChannel) {
-      return interaction.editReply({
-        content: "❌ **Join Public Voice Call before Clocking In**",
-      });
-    }
-
-
-    // ----- CONTINUE CLOCK IN LOGIC BELOW -----
-
-
     if (!timesheet[username]) {
       timesheet[username] = { logs: [] };
     }
@@ -407,15 +362,14 @@ client.on("interactionCreate", async interaction => {
     timesheet[username].active = start;
   
     await persist();
-    
     // ---- VOICE CHECK (2.5 MINUTES) ----
-    // ---- VOICE CHECK (2.5 MIN REMINDER + 2.5 MIN AUTO CLOCKOUT) ----
     if (voiceCheckTimers.has(username)) {
       clearTimeout(voiceCheckTimers.get(username));
     }
     
-    // FIRST TIMER: REMINDER ONLY (2.5 minutes)
-    const reminderTimer = setTimeout(async () => {
+    const guild = getGuild(interaction);
+    
+    const timer = setTimeout(async () => {
       await loadFromDisk();
     
       if (!timesheet[username]?.active) {
@@ -423,9 +377,7 @@ client.on("interactionCreate", async interaction => {
         return;
       }
     
-      const guild = getGuild(interaction);
       let member = null;
-    
       try {
         const members = await guild.members.fetch();
         member = members.find(m =>
@@ -437,22 +389,22 @@ client.on("interactionCreate", async interaction => {
     
       const inVoice = member?.voice?.channel;
     
-      // ❗ NOT IN VOICE → SEND REMINDER ONLY
       if (!inVoice && timesheet[username]?.active) {
+        await forceClockOut(username);
+    
         try {
-          await safeChannelSend(interaction, {
+          await interaction.followUp({
             embeds: [{
-              title: "⚠️ Voice Channel Reminder",
-              color: 0xf1c40f,
+              title: "⛔ Auto Clocked Out",
+              color: 0xe67e22,
               fields: [
                 { name: "👤 User", value: username },
-                { name: "⏱ Status", value: "You are **not in a voice channel**" },
                 {
-                  name: "📢 Action Required",
-                  value: "Join a voice channel within **2.5 minutes** or you will be auto clocked out.",
+                  name: "📍 Reason",
+                  value: "Not in a voice channel after 2.5 minutes",
                 },
                 {
-                  name: "📝 Reminder",
+                  name: "⚠️ Reminder",
                   value: "**REMINDER: UPDATE AD SPENT**",
                 },
               ],
@@ -460,64 +412,12 @@ client.on("interactionCreate", async interaction => {
             }],
           });
         } catch {}
-    
-        // SECOND TIMER: AUTO CLOCKOUT (another 2.5 minutes)
-        const clockoutTimer = setTimeout(async () => {
-          await loadFromDisk();
-    
-          if (!timesheet[username]?.active) {
-            voiceCheckTimers.delete(username);
-            return;
-          }
-    
-          let member2 = null;
-          try {
-            const members2 = await guild.members.fetch();
-            member2 = members2.find(m =>
-              m.displayName === username ||
-              m.user.username === username ||
-              m.user.globalName === username
-            );
-          } catch {}
-    
-          const stillNotInVoice = !member2?.voice?.channel;
-    
-          if (stillNotInVoice && timesheet[username]?.active) {
-            await forceClockOut(username);
-    
-            try {
-              await safeChannelSend(interaction, {
-                embeds: [{
-                  title: "⛔ Auto Clocked Out",
-                  color: 0xe74c3c,
-                  fields: [
-                    { name: "👤 User", value: username },
-                    {
-                      name: "📍 Reason",
-                      value: "Not in a voice channel for **5 minutes**",
-                    },
-                    {
-                      name: "📝 Reminder",
-                      value: "**REMINDER: UPDATE AD SPENT**",
-                    },
-                  ],
-                  timestamp: new Date().toISOString(),
-                }],
-              });
-            } catch {}
-          }
-    
-          voiceCheckTimers.delete(username);
-        }, 150000); // another 2.5 minutes
-    
-        voiceCheckTimers.set(username, clockoutTimer);
-      } else {
-        voiceCheckTimers.delete(username);
       }
-    }, 150000); // first 2.5 minutes
     
-    voiceCheckTimers.set(username, reminderTimer);
-
+      voiceCheckTimers.delete(username);
+    }, 150000); // 2.5 minutes
+    
+    voiceCheckTimers.set(username, timer);
 
 
     return interaction.editReply({
