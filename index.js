@@ -8,7 +8,7 @@ import { startKeepAlive } from "./keepAlive.js";
 // =======================
 const PH_TZ = "Asia/Manila";
 const DATA_FILE = "./timesheet.json";
-const MANAGERS = ["4rc", "Rich"];
+const MANAGERS = ["854713123851337758", "769554444534153238"];
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
@@ -126,25 +126,23 @@ async function dmManagers(guild, embed) {
   let members;
   try {
     members = await guild.members.fetch();
-  } catch {
+  } catch (err) {
+    console.warn("Failed to fetch members:", err);
     return;
   }
 
   for (const m of members.values()) {
-    const name =
-      m.displayName ||
-      m.user.globalName ||
-      m.user.username;
-
-    if (MANAGERS.includes(name)) {
+    if (MANAGERS.includes(m.id)) {
       try {
         await m.send({ embeds: [embed] });
-      } catch {
-        // DM closed — ignore silently
+      } catch (err) {
+        console.warn(`Cannot DM ${m.user.tag}: ${err.message}`);
       }
     }
   }
 }
+
+console.log("Found managers:", members.filter(m => MANAGERS.includes(m.id)).map(m => m.user.tag));
 
 
 function parseDate(str, end = false) {
@@ -231,7 +229,40 @@ async function forceClockOut(username) {
   await persist();
 
   console.log(`⛔ Auto clock-out: ${username} (not in voice)`);
+
+  // --- DM MANAGERS ---
+  const embed = {
+    title: "⛔ Auto Clocked Out",
+    color: 0xe74c3c,
+    fields: [
+      { name: "👤 User", value: username },
+      {
+        name: "📍 Reason",
+        value: "Not in a voice channel for 5 minutes",
+      },
+      {
+        name: "▶️ Started",
+        value: formatDate(start),
+      },
+      {
+        name: "⏹ Ended",
+        value: formatDate(end),
+      },
+      {
+        name: "⏱ Duration",
+        value: `${Math.round(hours * 100) / 100}h`,
+      },
+      {
+        name: "📝 Reminder",
+        value: "**REMINDER: UPDATE AD SPENT**",
+      },
+    ],
+    timestamp: new Date().toISOString(),
+  };
+
+  await dmManagers(client.guilds.cache.first(), embed);
 }
+
 
 
 function elapsed(startISO) {
@@ -367,6 +398,29 @@ client.on("interactionCreate", async interaction => {
   
     
     // -------- TOTAL HOURS (ALL USERS) --------
+    if (interaction.commandName === "erase") {
+      const channel = interaction.channel;
+      if (!channel) return interaction.editReply("❌ Cannot resolve channel.");
+    
+      try {
+        const fetched = await channel.messages.fetch({ limit: 100 });
+        const botMessages = fetched.filter(m => m.author.id === client.user.id);
+    
+        if (botMessages.size === 0) {
+          return interaction.editReply("📭 No bot messages found to erase.");
+        }
+    
+        for (const m of botMessages.values()) {
+          await m.delete().catch(() => {});
+        }
+    
+        return interaction.editReply(`✅ Deleted ${botMessages.size} bot messages.`);
+      } catch (err) {
+        console.error(err);
+        return interaction.editReply("❌ Failed to erase messages.");
+      }
+    }
+
     if (interaction.commandName === "totalhr") {
       await loadFromDisk();
     
