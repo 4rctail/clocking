@@ -176,7 +176,14 @@
     "name": "Joezer"
   },
   "somethinglikeTrent": {
-    "logs": [],
-    "active": "2026-01-13T22:11:25.109Z"
+    "logs": [
+      {
+        "start": "2026-01-13T22:11:25.109Z",
+        "end": "2026-01-13T22:13:55.214Z",
+        "hours": 0.04,
+        "forced": true
+      }
+    ],
+    "name": "somethinglikeTrent"
   }
 }
