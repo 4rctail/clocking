@@ -134,13 +134,18 @@ async function dmManagers(guild, embed) {
   for (const m of members.values()) {
     if (MANAGERS.includes(m.id)) {
       try {
-        await m.send({ embeds: [embed] });
-      } catch (err) {
-        console.warn(`Cannot DM ${m.user.tag}: ${err.message}`);
-        console.log("Found managers:", members.filter(m => MANAGERS.includes(m.id)).map(m => m.user.tag));
-      }
-    }
-  }
+        const foundManagers = members.filter(m => MANAGERS.includes(m.id)).map(m => m.user.tag);
+        console.log("Found managers:", foundManagers);
+        
+        for (const m of members.values()) {
+          if (MANAGERS.includes(m.id)) {
+            try {
+              await m.send({ embeds: [embed] });
+            } catch (err) {
+              console.warn(`Cannot DM ${m.user.tag}: ${err.message}`);
+            }
+          }
+        }
 }
 
 
