@@ -8,7 +8,7 @@ import { startKeepAlive } from "./keepAlive.js";
 // =======================
 const PH_TZ = "Asia/Manila";
 const DATA_FILE = "./timesheet.json";
-const MANAGER_ROLE_NAME = "Manager"; // change if needed
+const MANAGERS = ["4rc", "Arc"];
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
@@ -257,14 +257,11 @@ async function commitToGitHub() {
   console.log("✅ Timesheet committed to GitHub");
 }
 
-function hasManagerRole(member) {
-  if (!member) return false;
-  if (!member.roles || !member.roles.cache) return false;
-
-  return member.roles.cache.some(
-    r => r.name === MANAGER_ROLE_NAME
-  );
+function hasManagerRole(username) {
+  if (!username) return false;
+  return MANAGERS.includes(username);
 }
+
 
 
 // =======================
@@ -505,9 +502,15 @@ client.on("interactionCreate", async interaction => {
         }
       }
       
-      if (!hasManagerRole(member)) {
+      const username =
+        interaction.member?.displayName ||
+        interaction.user?.globalName ||
+        interaction.user?.username;
+      
+      if (!hasManagerRole(username)) {
         return interaction.editReply("❌ Managers only.");
       }
+
     
       await loadFromDisk();
       if (timesheet?.undefined) {
