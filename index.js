@@ -422,7 +422,7 @@ client.on("interactionCreate", async interaction => {
     if (voiceCheckTimers.has(userId)) {
       clearTimeout(voiceCheckTimers.get(userId));
       voiceCheckTimers.delete(userId);
-    }
+    
   
     // ---- 2.5 MIN REMINDER ----
     const reminderTimer = setTimeout(async () => {
@@ -464,7 +464,7 @@ client.on("interactionCreate", async interaction => {
 
 
   // -------- CLOCK OUT --------
-  // -------- CLOCK OUT (EMBED + DETAILS) --------
+  // -------- CLOCK OUT (EMBED + DETAILS) -------
   if (interaction.commandName === "clockout") {
     await loadFromDisk();
   
@@ -484,53 +484,39 @@ client.on("interactionCreate", async interaction => {
     const hours = (new Date(end) - new Date(start)) / 3600000;
     const rounded = Math.round(hours * 100) / 100;
   
-    // Push to logs
-    userData.logs.push({
-      start,
-      end,
-      hours,
-    });
-  
-    // Remove active session
+    userData.logs.push({ start, end, hours });
     delete userData.active;
-  
-    // Save username
     userData.name = username;
   
     await persist();
-    // cancel pending voice check
+  
     const userId = interaction.user.id;
-    
     if (voiceCheckTimers.has(userId)) {
       clearTimeout(voiceCheckTimers.get(userId));
       voiceCheckTimers.delete(userId);
     }
-
-    }
-
+  
     const voiceChannel =
       interaction.member?.voice?.channel?.name || "Not in voice";
   
-    // Build the embed
     const embed = {
       title: "🔴 Clocked Out",
       color: 0xe74c3c,
       fields: [
         { name: "👤 User", value: username, inline: true },
         { name: "📍 Voice Channel", value: voiceChannel, inline: true },
-        { name: "▶️ Started", value: formatDate(start), inline: false },
-        { name: "⏹ Ended", value: formatDate(end), inline: false },
+        { name: "▶️ Started", value: formatDate(start) },
+        { name: "⏹ Ended", value: formatDate(end) },
         { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
         {
           name: "⚠️ Reminder",
           value: "**REMINDER: UPDATE AD SPENT**",
-          inline: false,
         },
       ],
-      footer: { text: "Time Tracker" },
       timestamp: new Date().toISOString(),
     };
   
+    await dmManagers(interaction.guild, embed);
     return interaction.editReply({ embeds: [embed] });
   }
 
