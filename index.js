@@ -379,21 +379,12 @@ client.on("interactionCreate", async interaction => {
   // -------- CLOCK IN --------
   // -------- CLOCK IN (EMBED) --------
   if (interaction.commandName === "clockin") {
-    const username = getUsername(interaction);
+    const userId = interaction.user.id;
+    const guild = interaction.guild;
   
-    const guild = getGuild(interaction);
-    let memberInVoice = null;
-  
-    try {
-      const members = await guild.members.fetch();
-      memberInVoice = members.find(m =>
-        m.displayName === username ||
-        m.user.username === username ||
-        m.user.globalName === username
-      );
-    } catch {}
-  
-    const inVoice = memberInVoice?.voice?.channel;
+    // 🔥 CORRECT VOICE CHECK
+    const voiceState = guild.voiceStates.cache.get(userId);
+    const inVoice = voiceState?.channel;
   
     if (!inVoice) {
       return interaction.editReply({
@@ -401,6 +392,8 @@ client.on("interactionCreate", async interaction => {
       });
     }
   
+    const username = getUsername(interaction);
+
     // ----- CONTINUE CLOCK IN LOGIC BELOW -----
 
 
