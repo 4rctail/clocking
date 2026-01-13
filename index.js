@@ -380,13 +380,29 @@ client.on("interactionCreate", async interaction => {
   // -------- CLOCK IN (EMBED) --------
   if (interaction.commandName === "clockin") {
     const username = getUsername(interaction);
-    const member = interaction.member;
-    
-    if (!member?.voice?.channel) {
+  
+    const guild = getGuild(interaction);
+    let memberInVoice = null;
+  
+    try {
+      const members = await guild.members.fetch();
+      memberInVoice = members.find(m =>
+        m.displayName === username ||
+        m.user.username === username ||
+        m.user.globalName === username
+      );
+    } catch {}
+  
+    const inVoice = memberInVoice?.voice?.channel;
+  
+    if (!inVoice) {
       return interaction.editReply({
         content: "❌ **Join Public Voice Call before Clocking In**",
       });
     }
+  
+    // ----- CONTINUE CLOCK IN LOGIC BELOW -----
+
 
     if (!timesheet[username]) {
       timesheet[username] = { logs: [] };
