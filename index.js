@@ -588,7 +588,7 @@ client.on("interactionCreate", async interaction => {
       }],
     });
   }
-
+});  
 // =======================
 // STARTUP
 // =======================
