@@ -29,6 +29,34 @@ function getGuild(interaction) {
   return interaction.guild ?? client.guilds.cache.first();
 }
 
+async function dmManagers(guild, embed) {
+  if (!guild) return;
+
+  let members;
+  try {
+    members = await guild.members.fetch();
+  } catch (err) {
+    console.warn("Failed to fetch members:", err);
+    return;
+  }
+
+  const foundManagers = members
+    .filter(m => MANAGERS.includes(m.user.username))
+    .map(m => m.user.tag);
+
+  console.log("Found managers:", foundManagers);
+
+  for (const member of members.values()) {
+    if (!MANAGERS.includes(member.user.username)) continue;
+
+    try {
+      await member.send({ embeds: [embed] });
+    } catch (err) {
+      console.warn(`Cannot DM ${member.user.tag}: ${err.message}`);
+    }
+  }
+}
+
 
 function resolveDisplayName(interaction, member) {
   if (member?.displayName) return member.displayName;
