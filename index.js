@@ -484,12 +484,18 @@ client.on("interactionCreate", async interaction => {
     const hours = (new Date(end) - new Date(start)) / 3600000;
     const rounded = Math.round(hours * 100) / 100;
   
-    userData.logs.push({ start, end, hours });
+    userData.logs.push({
+      start,
+      end,
+      hours: rounded,
+    });
+  
     delete userData.active;
     userData.name = username;
   
     await persist();
   
+    // cancel pending voice timers
     const userId = interaction.user.id;
     if (voiceCheckTimers.has(userId)) {
       clearTimeout(voiceCheckTimers.get(userId));
@@ -505,22 +511,22 @@ client.on("interactionCreate", async interaction => {
       fields: [
         { name: "👤 User", value: username, inline: true },
         { name: "📍 Voice Channel", value: voiceChannel, inline: true },
-        { name: "▶️ Started", value: formatDate(start) },
-        { name: "⏹ Ended", value: formatDate(end) },
+        { name: "▶️ Started", value: formatDate(start), inline: false },
+        { name: "⏹ Ended", value: formatDate(end), inline: false },
         { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
         {
           name: "⚠️ Reminder",
           value: "**REMINDER: UPDATE AD SPENT**",
+          inline: false,
         },
       ],
+      footer: { text: "Time Tracker" },
       timestamp: new Date().toISOString(),
     };
   
-    await dmManagers(interaction.guild, embed);
     return interaction.editReply({ embeds: [embed] });
   }
 
-  
 
   // -------- STATUS (EMBED + LIVE UPDATE) --------
   // -------- STATUS (USERNAME ONLY, SAFE) --------
@@ -793,8 +799,8 @@ client.on("interactionCreate", async interaction => {
       }],
     });
 
-  }
-});  
+}); // closes interactionCreate ONLY
+
 // =======================
 // STARTUP
 // =======================
