@@ -8,7 +8,7 @@ import { startKeepAlive } from "./keepAlive.js";
 // =======================
 const PH_TZ = "Asia/Manila";
 const DATA_FILE = "./timesheet.json";
-const MANAGERS = ["4rc", "Arc"];
+const MANAGERS = ["4rc", "Rich"];
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
