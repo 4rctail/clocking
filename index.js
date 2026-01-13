@@ -278,7 +278,6 @@ client.on("interactionCreate", async interaction => {
   
     
     // -------- TOTAL HOURS (ALL USERS) --------
-    // -------- TOTAL HOURS (ALL USERS) --------
     if (interaction.commandName === "totalhr") {
       await loadFromDisk();
     
@@ -295,19 +294,23 @@ client.on("interactionCreate", async interaction => {
         total = Math.round(total * 100) / 100;
         if (total <= 0) continue;
     
-        lines.push(`${username} — ${total.toFixed(2)}h`);
+        lines.push(`**${username}** — ${total.toFixed(2)}h`);
       }
     
       if (!lines.length) {
         return interaction.editReply("📭 No tracked hours.");
       }
     
-      return interaction.editReply(
-        `📊 **Total Hours (All Users)**\n` + lines.join("\n")
-      );
+      return interaction.editReply({
+        embeds: [{
+          title: "📊 Total Hours (All Users)",
+          color: 0x9b59b6,
+          description: lines.join("\n"),
+          footer: { text: "Time Tracker" },
+          timestamp: new Date().toISOString(),
+        }],
+      });
     }
-
-        
 
 
   // -------- CLOCK IN --------
