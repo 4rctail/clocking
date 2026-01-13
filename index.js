@@ -351,26 +351,63 @@ client.on("interactionCreate", async interaction => {
   // -------- CLOCK OUT --------
   // -------- CLOCK OUT (EMBED + DETAILS) --------
   if (interaction.commandName === "clockout") {
-    const username = getUsername(interaction);
-    const user = timesheet[username];
+    await loadFromDisk();
   
-    if (!user?.active) {
+    const username =
+      interaction.member?.displayName ||
+      interaction.user?.globalName ||
+      interaction.user?.username;
+  
+    const userData = timesheet[username];
+  
+    if (!userData?.active) {
       return interaction.editReply("❌ Not clocked in.");
     }
   
-    const end = nowISO();
-    const hours = diffHours(user.active, end);
+    const start = userData.active;
+    const end = new Date().toISOString();
+    const hours = (new Date(end) - new Date(start)) / 3600000;
+    const rounded = Math.round(hours * 100) / 100;
   
-    user.logs.push({
-      start: user.active,
+    // Push to logs
+    userData.logs.push({
+      start,
       end,
       hours,
     });
   
-    delete user.active;
+    // Remove active session
+    delete userData.active;
+  
+    // Save username
+    userData.name = username;
+  
     await persist();
   
-    return interaction.editReply(`🔴 Clocked out — **${Math.round(hours * 100) / 100}h**`);
+    const voiceChannel =
+      interaction.member?.voice?.channel?.name || "Not in voice";
+  
+    // Build the embed
+    const embed = {
+      title: "🔴 Clocked Out",
+      color: 0xe74c3c,
+      fields: [
+        { name: "👤 User", value: username, inline: true },
+        { name: "📍 Voice Channel", value: voiceChannel, inline: true },
+        { name: "▶️ Started", value: formatDate(start), inline: false },
+        { name: "⏹ Ended", value: formatDate(end), inline: false },
+        { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
+        {
+          name: "⚠️ Reminder",
+          value: "**REMINDER: UPDATE AD SPENT**",
+          inline: false,
+        },
+      ],
+      footer: { text: "Time Tracker" },
+      timestamp: new Date().toISOString(),
+    };
+  
+    return interaction.editReply({ embeds: [embed] });
   }
 
   
