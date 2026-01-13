@@ -258,8 +258,14 @@ async function commitToGitHub() {
 }
 
 function hasManagerRole(member) {
-  return member.roles.cache.some(r => r.name === MANAGER_ROLE_NAME);
+  if (!member) return false;
+  if (!member.roles || !member.roles.cache) return false;
+
+  return member.roles.cache.some(
+    r => r.name === MANAGER_ROLE_NAME
+  );
 }
+
 
 // =======================
 // SLASH COMMANDS
@@ -490,9 +496,19 @@ client.on("interactionCreate", async interaction => {
     // ===== RESET (MANAGER ONLY) =====
     // ===== RESET (MANAGER ONLY, USERNAME-ONLY) =====
     if (sub === "reset") {
-      if (!hasManagerRole(interaction.member)) {
+      let member = interaction.member;
+      if (!member) {
+        try {
+          member = await interaction.guild.members.fetch(interaction.user.id);
+        } catch {
+          member = null;
+        }
+      }
+      
+      if (!hasManagerRole(member)) {
         return interaction.editReply("❌ Managers only.");
       }
+
     
       await loadFromDisk();
       if (timesheet?.undefined) {
