@@ -35,6 +35,14 @@ function resolveDisplayName(interaction, member) {
       || interaction.user.username
       || "Unknown User";
 }
+function getUsername(interaction) {
+  return (
+    interaction.member?.displayName ||
+    interaction.user?.globalName ||
+    interaction.user?.username ||
+    "unknown"
+  );
+}
 
 function formatSession(startISO, endISO) {
   const dateOpts = {
@@ -311,36 +319,29 @@ client.on("interactionCreate", async interaction => {
   // -------- CLOCK IN --------
   // -------- CLOCK IN (EMBED) --------
   if (interaction.commandName === "clockin") {
-    if (!timesheet[userId]) {
-      timesheet[userId] = {
-        name: displayName,
-        logs: [],
-      };
+    const username = getUsername(interaction);
+  
+    if (!timesheet[username]) {
+      timesheet[username] = { logs: [] };
     }
   
-    if (timesheet[userId].active) {
+    if (timesheet[username].active) {
       return interaction.editReply("❌ Already clocked in.");
     }
   
     const start = nowISO();
-    timesheet[userId].active = start;
-    timesheet[userId].name = displayName;
+    timesheet[username].active = start;
   
     await persist();
-  
-    const voiceChannel =
-      interaction.member?.voice?.channel?.name || "Not in voice";
   
     return interaction.editReply({
       embeds: [{
         title: "🟢 Clocked In",
         color: 0x2ecc71,
         fields: [
-          { name: "👤 User", value: displayName, inline: true },
-          { name: "📍 Voice Channel", value: voiceChannel, inline: true },
+          { name: "👤 User", value: username },
           { name: "⏱ Start Time", value: formatDate(start) },
         ],
-        footer: { text: "Time Tracker" },
         timestamp: new Date(start).toISOString(),
       }],
     });
@@ -350,46 +351,28 @@ client.on("interactionCreate", async interaction => {
   // -------- CLOCK OUT --------
   // -------- CLOCK OUT (EMBED + DETAILS) --------
   if (interaction.commandName === "clockout") {
-    const start = timesheet[userId].active;
-    if (!start)
+    const username = getUsername(interaction);
+    const user = timesheet[username];
+  
+    if (!user?.active) {
       return interaction.editReply("❌ Not clocked in.");
+    }
   
     const end = nowISO();
-    const hours = diffHours(start, end);
-    const rounded = Math.round(hours * 100) / 100;
+    const hours = diffHours(user.active, end);
   
-    timesheet[userId].logs.push({
-      start,
+    user.logs.push({
+      start: user.active,
       end,
       hours,
     });
   
-    delete timesheet[userId].active;
-    timesheet[userId].name = displayName;
-  
+    delete user.active;
     await persist();
   
-    const voiceChannel =
-      interaction.member?.voice?.channel?.name || "Not in voice";
-  
-    const embed = {
-      title: "🔴 Clocked Out",
-      color: 0xe74c3c,
-      fields: [
-        { name: "👤 User", value: displayName, inline: true },
-        { name: "📍 Voice Channel", value: voiceChannel, inline: true },
-        { name: "▶️ Started", value: formatDate(start), inline: false },
-        { name: "⏹ Ended", value: formatDate(end), inline: false },
-        { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
-      ],
-      footer: {
-        text: "Time Tracker",
-      },
-      timestamp: new Date(end).toISOString(),
-    };
-  
-    return interaction.editReply({ embeds: [embed] });
+    return interaction.editReply(`🔴 Clocked out — **${Math.round(hours * 100) / 100}h**`);
   }
+
   
 
   // -------- STATUS (EMBED + LIVE UPDATE) --------
