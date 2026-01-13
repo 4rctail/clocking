@@ -30,8 +30,14 @@
     "name": "Kem"
   },
   "Dail": {
-    "logs": [],
-    "active": "2026-01-13T22:25:22.969Z"
+    "logs": [
+      {
+        "start": "2026-01-13T22:25:22.969Z",
+        "end": "2026-01-13T23:57:46.789Z",
+        "hours": 1.53995
+      }
+    ],
+    "name": "Dail"
   },
   "somethinglikeTrent": {
     "logs": [],
