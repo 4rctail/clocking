@@ -362,35 +362,28 @@ client.on("interactionCreate", async interaction => {
     timesheet[username].active = start;
   
     await persist();
-    // ---- VOICE CHECK (2.5 MINUTES) ----
     // ---- VOICE CHECK (2.5 MIN + REMINDER) ----
-    if (voiceCheckTimers.has(username)) {
-      clearTimeout(voiceCheckTimers.get(username));
-    }
+    const userId = member.id; // Use Discord ID
     
-    const guild = getGuild(interaction);
+    if (voiceCheckTimers.has(userId)) {
+      clearTimeout(voiceCheckTimers.get(userId));
+    }
     
     const reminderTimer = setTimeout(async () => {
       await loadFromDisk();
     
       if (!timesheet[username]?.active) {
-        voiceCheckTimers.delete(username);
+        voiceCheckTimers.delete(userId);
         return;
       }
     
-      let member = null;
+      let memberFresh;
       try {
-        const members = await guild.members.fetch();
-        member = members.find(m =>
-          m.displayName === username ||
-          m.user.username === username ||
-          m.user.globalName === username
-        );
+        memberFresh = await guild.members.fetch(userId);
       } catch {}
     
-      const inVoice = member?.voice?.channel;
+      const inVoice = memberFresh?.voice?.channel;
     
-      // If not in voice, send reminder
       if (!inVoice) {
         try {
           await interaction.followUp({
@@ -399,26 +392,20 @@ client.on("interactionCreate", async interaction => {
         } catch {}
       }
     
-      // ---- SECOND TIMER: Auto clock out if still not in voice ----
       const autoClockOutTimer = setTimeout(async () => {
         await loadFromDisk();
     
         if (!timesheet[username]?.active) {
-          voiceCheckTimers.delete(username);
+          voiceCheckTimers.delete(userId);
           return;
         }
     
-        let member2 = null;
+        let memberFresh2;
         try {
-          const members = await guild.members.fetch();
-          member2 = members.find(m =>
-            m.displayName === username ||
-            m.user.username === username ||
-            m.user.globalName === username
-          );
+          memberFresh2 = await guild.members.fetch(userId);
         } catch {}
     
-        const inVoice2 = member2?.voice?.channel;
+        const inVoice2 = memberFresh2?.voice?.channel;
     
         if (!inVoice2) {
           await forceClockOut(username);
@@ -439,14 +426,15 @@ client.on("interactionCreate", async interaction => {
           } catch {}
         }
     
-        voiceCheckTimers.delete(username);
+        voiceCheckTimers.delete(userId);
       }, 150000); // 2.5 minutes after reminder
     
-      voiceCheckTimers.set(username, autoClockOutTimer);
+      voiceCheckTimers.set(userId, autoClockOutTimer);
     
     }, 150000); // initial 2.5 min reminder
     
-    voiceCheckTimers.set(username, reminderTimer);
+    voiceCheckTimers.set(userId, reminderTimer);
+
 
 
 
