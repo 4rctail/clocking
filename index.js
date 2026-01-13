@@ -25,6 +25,8 @@ const client = new Client({
   ],
 });
 
+
+
 function getGuild(interaction) {
   return interaction.guild ?? client.guilds.cache.first();
 }
@@ -99,6 +101,15 @@ function formatSession(startISO, endISO) {
   return `${datePart}, ${timePart}`;
 }
 
+async function safeChannelSend(interaction, payload) {
+  try {
+    const channel = interaction.channel;
+    if (!channel) return;
+    await channel.send(payload);
+  } catch (err) {
+    console.warn("⚠ Failed to send channel message:", err?.message);
+  }
+}
 
 async function loadFromDisk() {
   try {
@@ -372,9 +383,8 @@ client.on("interactionCreate", async interaction => {
     const member = interaction.member;
     
     if (!member?.voice?.channel) {
-      return interaction.reply({
+      return interaction.editReply({
         content: "❌ **Join Public Voice Call before Clocking In**",
-        ephemeral: true,
       });
     }
 
@@ -423,16 +433,13 @@ client.on("interactionCreate", async interaction => {
       // ❗ NOT IN VOICE → SEND REMINDER ONLY
       if (!inVoice && timesheet[username]?.active) {
         try {
-          await interaction.followUp({
+          await safeChannelSend(interaction, {
             embeds: [{
               title: "⚠️ Voice Channel Reminder",
               color: 0xf1c40f,
               fields: [
                 { name: "👤 User", value: username },
-                {
-                  name: "⏱ Status",
-                  value: "You are **not in a voice channel**",
-                },
+                { name: "⏱ Status", value: "You are **not in a voice channel**" },
                 {
                   name: "📢 Action Required",
                   value: "Join a voice channel within **2.5 minutes** or you will be auto clocked out.",
@@ -472,7 +479,7 @@ client.on("interactionCreate", async interaction => {
             await forceClockOut(username);
     
             try {
-              await interaction.followUp({
+              await safeChannelSend(interaction, {
                 embeds: [{
                   title: "⛔ Auto Clocked Out",
                   color: 0xe74c3c,
