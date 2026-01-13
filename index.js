@@ -29,34 +29,6 @@ function getGuild(interaction) {
   return interaction.guild ?? client.guilds.cache.first();
 }
 
-async function dmManagers(guild, embed) {
-  if (!guild) return;
-
-  let members;
-  try {
-    members = await guild.members.fetch();
-  } catch (err) {
-    console.warn("Failed to fetch members:", err);
-    return;
-  }
-
-  const foundManagers = members
-    .filter(m => MANAGERS.includes(m.user.username))
-    .map(m => m.user.tag);
-
-  console.log("Found managers:", foundManagers);
-
-  for (const member of members.values()) {
-    if (!MANAGERS.includes(member.user.username)) continue;
-
-    try {
-      await member.send({ embeds: [embed] });
-    } catch (err) {
-      console.warn(`Cannot DM ${member.user.tag}: ${err.message}`);
-    }
-  }
-}
-
 
 function resolveDisplayName(interaction, member) {
   if (member?.displayName) return member.displayName;
@@ -107,34 +79,6 @@ function formatSession(startISO, endISO) {
   return `${datePart}, ${timePart}`;
 }
 
-async function checkVoiceAndAutoClockOut(username, userId, guild) {
-  const voiceState = guild.voiceStates.cache.get(userId);
-
-  if (voiceState?.channel) {
-    console.log(`✅ ${username} still in voice: ${voiceState.channel.name}`);
-    return;
-  }
-
-  await forceClockOut(username);
-
-  console.log(`⛔ Auto clocked out: ${username} (not in voice)`);
-
-  // DM managers
-  const embed = {
-    title: "⛔ Auto Clocked Out",
-    color: 0xe67e22,
-    fields: [
-      { name: "👤 User", value: username },
-      { name: "📍 Reason", value: "Not in a public voice channel after 5 minutes" },
-      { name: "⚠️ Reminder", value: "**REMINDER: UPDATE AD SPENT**" },
-    ],
-    timestamp: new Date().toISOString(),
-  };
-
-  await dmManagers(guild, embed);
-}
-
-
 
 async function loadFromDisk() {
   try {
@@ -144,7 +88,6 @@ async function loadFromDisk() {
     timesheet = {};
   }
 }
-
 
 
 function parseDate(str, end = false) {
@@ -407,47 +350,76 @@ client.on("interactionCreate", async interaction => {
   if (interaction.commandName === "clockin") {
     const username = getUsername(interaction);
   
-    if (!timesheet[username]) timesheet[username] = { logs: [] };
-    if (timesheet[username].active)
+    if (!timesheet[username]) {
+      timesheet[username] = { logs: [] };
+    }
+  
+    if (timesheet[username].active) {
       return interaction.editReply("❌ Already clocked in.");
+    }
   
     const start = nowISO();
     timesheet[username].active = start;
+  
     await persist();
-  
-    const userId = interaction.user.id;
-    const guild = interaction.guild;
-  
-    // CLEAR old timers
-    if (voiceCheckTimers.has(userId)) {
-      clearTimeout(voiceCheckTimers.get(userId));
-      voiceCheckTimers.delete(userId);
+    // ---- VOICE CHECK (2.5 MINUTES) ----
+    if (voiceCheckTimers.has(username)) {
+      clearTimeout(voiceCheckTimers.get(username));
+    }
     
-  
-    // ---- 2.5 MIN REMINDER ----
-    const reminderTimer = setTimeout(async () => {
+    const guild = getGuild(interaction);
+    
+    const timer = setTimeout(async () => {
       await loadFromDisk();
-      if (!timesheet[username]?.active) return;
-  
-      const voiceState = guild.voiceStates.cache.get(userId);
-      if (!voiceState?.channel) {
+    
+      if (!timesheet[username]?.active) {
+        voiceCheckTimers.delete(username);
+        return;
+      }
+    
+      let member = null;
+      try {
+        const members = await guild.members.fetch();
+        member = members.find(m =>
+          m.displayName === username ||
+          m.user.username === username ||
+          m.user.globalName === username
+        );
+      } catch {}
+    
+      const inVoice = member?.voice?.channel;
+    
+      if (!inVoice && timesheet[username]?.active) {
+        await forceClockOut(username);
+    
         try {
-          await interaction.user.send(
-            "⏳ Reminder: Join a public voice channel within 2.5 minutes or you will be auto clocked out."
-          );
+          await interaction.followUp({
+            embeds: [{
+              title: "⛔ Auto Clocked Out",
+              color: 0xe67e22,
+              fields: [
+                { name: "👤 User", value: username },
+                {
+                  name: "📍 Reason",
+                  value: "Not in a voice channel after 2.5 minutes",
+                },
+                {
+                  name: "⚠️ Reminder",
+                  value: "**REMINDER: UPDATE AD SPENT**",
+                },
+              ],
+              timestamp: new Date().toISOString(),
+            }],
+          });
         } catch {}
       }
-  
-      // ---- FINAL AUTO CLOCK OUT (5 MIN TOTAL) ----
-      const autoOutTimer = setTimeout(() => {
-        checkVoiceAndAutoClockOut(username, userId, guild);
-      }, 150000);
-  
-      voiceCheckTimers.set(userId, autoOutTimer);
-    }, 150000);
-  
-    voiceCheckTimers.set(userId, reminderTimer);
-  
+    
+      voiceCheckTimers.delete(username);
+    }, 150000); // 2.5 minutes
+    
+    voiceCheckTimers.set(username, timer);
+
+
     return interaction.editReply({
       embeds: [{
         title: "🟢 Clocked In",
@@ -462,9 +434,8 @@ client.on("interactionCreate", async interaction => {
   }
 
 
-
   // -------- CLOCK OUT --------
-  // -------- CLOCK OUT (EMBED + DETAILS) -------
+  // -------- CLOCK OUT (EMBED + DETAILS) --------
   if (interaction.commandName === "clockout") {
     await loadFromDisk();
   
@@ -484,27 +455,30 @@ client.on("interactionCreate", async interaction => {
     const hours = (new Date(end) - new Date(start)) / 3600000;
     const rounded = Math.round(hours * 100) / 100;
   
+    // Push to logs
     userData.logs.push({
       start,
       end,
-      hours: rounded,
+      hours,
     });
   
+    // Remove active session
     delete userData.active;
+  
+    // Save username
     userData.name = username;
   
     await persist();
-  
-    // cancel pending voice timers
-    const userId = interaction.user.id;
-    if (voiceCheckTimers.has(userId)) {
-      clearTimeout(voiceCheckTimers.get(userId));
-      voiceCheckTimers.delete(userId);
+    // cancel pending voice check
+    if (voiceCheckTimers.has(username)) {
+      clearTimeout(voiceCheckTimers.get(username));
+      voiceCheckTimers.delete(username);
     }
-  
+
     const voiceChannel =
       interaction.member?.voice?.channel?.name || "Not in voice";
   
+    // Build the embed
     const embed = {
       title: "🔴 Clocked Out",
       color: 0xe74c3c,
@@ -527,6 +501,7 @@ client.on("interactionCreate", async interaction => {
     return interaction.editReply({ embeds: [embed] });
   }
 
+  
 
   // -------- STATUS (EMBED + LIVE UPDATE) --------
   // -------- STATUS (USERNAME ONLY, SAFE) --------
@@ -638,14 +613,6 @@ client.on("interactionCreate", async interaction => {
   }
   
 
-  if (interaction.commandName === "leave") {
-    if (!interaction.guild) {
-      return interaction.reply({ content: "❌ No guild context", ephemeral: true });
-    }
-  
-    await interaction.reply("👋 Leaving server...");
-    await interaction.guild.leave();
-  }
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
@@ -799,8 +766,8 @@ client.on("interactionCreate", async interaction => {
       }],
     });
 
-}); // closes interactionCreate ONLY
-
+  }
+});  
 // =======================
 // STARTUP
 // =======================
