@@ -370,23 +370,31 @@ client.on("interactionCreate", async interaction => {
   
 
   // -------- STATUS (EMBED + LIVE UPDATE) --------
+  // -------- STATUS (USERNAME ONLY, SAFE) --------
   if (interaction.commandName === "status") {
-    // CLEAR EXISTING LIVE TIMER IF ANY
-    const existing = liveStatusTimers.get(userId);
-    if (existing) {
-      clearInterval(existing);
-      liveStatusTimers.delete(userId);
+    await loadFromDisk();
+    if (timesheet.undefined) {
+      delete timesheet.undefined;
+      await persist();
+    }
+
+  
+    const username = getUsername(interaction);
+    if (!username) {
+      return interaction.editReply("❌ Cannot resolve username.");
     }
   
-    // ===== CLOCKED IN =====
-    if (timesheet[userId].active) {
-      const start = timesheet[userId].active;
+    const userData = timesheet[username];
   
-      const buildEmbed = () => ({
+    // ===== CLOCKED IN =====
+    if (userData?.active) {
+      const start = userData.active;
+  
+      const embed = {
         title: "🟢 Status: Clocked In",
         color: 0x2ecc71,
         fields: [
-          { name: "👤 User", value: displayName, inline: true },
+          { name: "👤 User", value: username, inline: true },
           {
             name: "📍 Voice Channel",
             value:
@@ -407,57 +415,69 @@ client.on("interactionCreate", async interaction => {
         ],
         footer: { text: "Live updating every 5 seconds" },
         timestamp: new Date().toISOString(),
-      });
+      };
   
-      // SEND INITIAL EMBED
-      await interaction.editReply({ embeds: [buildEmbed()] });
+      // clear old timer
+      const existing = liveStatusTimers.get(username);
+      if (existing) {
+        clearInterval(existing);
+        liveStatusTimers.delete(username);
+      }
   
-      // START LIVE UPDATES
+      await interaction.editReply({ embeds: [embed] });
+  
+      // live update
       const timer = setInterval(async () => {
-        // STOP IF USER CLOCKED OUT
-        if (!timesheet[userId]?.active) {
+        if (!timesheet[username]?.active) {
           clearInterval(timer);
-          liveStatusTimers.delete(userId);
+          liveStatusTimers.delete(username);
           return;
         }
   
         try {
           await interaction.editReply({
-            embeds: [buildEmbed()],
+            embeds: [{
+              ...embed,
+              fields: embed.fields.map(f =>
+                f.name === "⏱ Elapsed"
+                  ? { ...f, value: formatElapsedLive(start) }
+                  : f
+              ),
+              timestamp: new Date().toISOString(),
+            }],
           });
         } catch {
           clearInterval(timer);
-          liveStatusTimers.delete(userId);
+          liveStatusTimers.delete(username);
         }
       }, 5000);
   
-      liveStatusTimers.set(userId, timer);
+      liveStatusTimers.set(username, timer);
       return;
     }
   
     // ===== CLOCKED OUT =====
-    const total = (timesheet[userId].logs || []).reduce(
-      (t, l) => t + l.hours,
-      0
-    );
+    const total =
+      userData?.logs?.reduce((t, l) => t + l.hours, 0) || 0;
   
-    const embed = {
-      title: "⚪ Status: Clocked Out",
-      color: 0x95a5a6,
-      fields: [
-        { name: "👤 User", value: displayName, inline: true },
-        {
-          name: "⏱ Total Recorded Time",
-          value: `${Math.round(total * 100) / 100}h`,
-          inline: true,
-        },
-      ],
-      footer: { text: "No active session" },
-      timestamp: new Date().toISOString(),
-    };
-  
-    return interaction.editReply({ embeds: [embed] });
+    return interaction.editReply({
+      embeds: [{
+        title: "⚪ Status: Clocked Out",
+        color: 0x95a5a6,
+        fields: [
+          { name: "👤 User", value: username, inline: true },
+          {
+            name: "⏱ Total Recorded Time",
+            value: `${Math.round(total * 100) / 100}h`,
+            inline: true,
+          },
+        ],
+        footer: { text: "No active session" },
+        timestamp: new Date().toISOString(),
+      }],
+    });
   }
+  
 
 
   // -------- TIMESHEET --------
