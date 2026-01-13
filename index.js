@@ -8,7 +8,7 @@ import { startKeepAlive } from "./keepAlive.js";
 // =======================
 const PH_TZ = "Asia/Manila";
 const DATA_FILE = "./timesheet.json";
-const MANAGERS = ["854713123851337758", "769554444534153238"];
+const MANAGERS = ["4rc", "Rich"];
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
@@ -120,37 +120,6 @@ async function loadFromDisk() {
   }
 }
 
-async function dmManagers(guild, embed) {
-  if (!guild) return;
-
-  let members;
-  try {
-    members = await guild.members.fetch();
-  } catch (err) {
-    console.warn("Failed to fetch members:", err);
-    return;
-  }
-
-  // Log all found managers once
-  const foundManagers = members
-    .filter(m => MANAGERS.includes(m.id))
-    .map(m => m.user.tag);
-  console.log("Found managers:", foundManagers);
-
-  for (const m of members.values()) {
-    if (MANAGERS.includes(m.id)) {
-      try {
-        await m.send({ embeds: [embed] });
-      } catch (err) {
-        console.warn(`Cannot DM ${m.user.tag}: ${err.message}`);
-      }
-    }
-  }
-}
-
-
-
-
 
 function parseDate(str, end = false) {
   if (!str) return null;
@@ -236,40 +205,7 @@ async function forceClockOut(username) {
   await persist();
 
   console.log(`⛔ Auto clock-out: ${username} (not in voice)`);
-
-  // --- DM MANAGERS ---
-  const embed = {
-    title: "⛔ Auto Clocked Out",
-    color: 0xe74c3c,
-    fields: [
-      { name: "👤 User", value: username },
-      {
-        name: "📍 Reason",
-        value: "Not in a voice channel for 5 minutes",
-      },
-      {
-        name: "▶️ Started",
-        value: formatDate(start),
-      },
-      {
-        name: "⏹ Ended",
-        value: formatDate(end),
-      },
-      {
-        name: "⏱ Duration",
-        value: `${Math.round(hours * 100) / 100}h`,
-      },
-      {
-        name: "📝 Reminder",
-        value: "**REMINDER: UPDATE AD SPENT**",
-      },
-    ],
-    timestamp: new Date().toISOString(),
-  };
-
-  await dmManagers(client.guilds.cache.first(), embed);
 }
-
 
 
 function elapsed(startISO) {
@@ -405,29 +341,6 @@ client.on("interactionCreate", async interaction => {
   
     
     // -------- TOTAL HOURS (ALL USERS) --------
-    if (interaction.commandName === "erase") {
-      const channel = interaction.channel;
-      if (!channel) return interaction.editReply("❌ Cannot resolve channel.");
-    
-      try {
-        const fetched = await channel.messages.fetch({ limit: 100 });
-        const botMessages = fetched.filter(m => m.author.id === client.user.id);
-    
-        if (botMessages.size === 0) {
-          return interaction.editReply("📭 No bot messages found to erase.");
-        }
-    
-        for (const m of botMessages.values()) {
-          await m.delete().catch(() => {});
-        }
-    
-        return interaction.editReply(`✅ Deleted ${botMessages.size} bot messages.`);
-      } catch (err) {
-        console.error(err);
-        return interaction.editReply("❌ Failed to erase messages.");
-      }
-    }
-
     if (interaction.commandName === "totalhr") {
       await loadFromDisk();
     
@@ -464,8 +377,23 @@ client.on("interactionCreate", async interaction => {
 
 
   // -------- CLOCK IN --------
+  // -------- CLOCK IN (EMBED) --------
+  // -------- CLOCK IN (VOICE CHECK – FIXED) --------
   if (interaction.commandName === "clockin") {
     const username = getUsername(interaction);
+  
+    // ✅ USE THE SAME LOGIC AS AUTO-CLOCKOUT
+    const voiceChannel = interaction.member?.voice?.channel;
+  
+    if (!voiceChannel) {
+      return interaction.editReply({
+        content: "❌ **Join Public Voice Call before Clocking In**",
+      });
+    }
+
+
+    // ----- CONTINUE CLOCK IN LOGIC BELOW -----
+
 
     if (!timesheet[username]) {
       timesheet[username] = { logs: [] };
@@ -479,22 +407,6 @@ client.on("interactionCreate", async interaction => {
     timesheet[username].active = start;
   
     await persist();
-    const managerEmbed = {
-      title: "🟢 User Clocked In",
-      color: 0x2ecc71,
-      fields: [
-        { name: "👤 User", value: username },
-        { name: "⏱ Start Time", value: formatDate(start) },
-        {
-          name: "📍 Voice Channel",
-          value: interaction.member?.voice?.channel?.name || "Not in voice",
-        },
-      ],
-      timestamp: new Date().toISOString(),
-    };
-    
-    await dmManagers(getGuild(interaction), managerEmbed);
-
     
     // ---- VOICE CHECK (2.5 MINUTES) ----
     // ---- VOICE CHECK (2.5 MIN REMINDER + 2.5 MIN AUTO CLOCKOUT) ----
@@ -657,24 +569,6 @@ client.on("interactionCreate", async interaction => {
     userData.name = username;
   
     await persist();
-    const managerEmbed = {
-      title: "🔴 User Clocked Out",
-      color: 0xe74c3c,
-      fields: [
-        { name: "👤 User", value: username },
-        { name: "▶️ Started", value: formatDate(start) },
-        { name: "⏹ Ended", value: formatDate(end) },
-        { name: "⏱ Session Duration", value: `${rounded}h` },
-        {
-          name: "📍 Voice Channel",
-          value: interaction.member?.voice?.channel?.name || "Not in voice",
-        },
-      ],
-      timestamp: new Date().toISOString(),
-    };
-    
-    await dmManagers(getGuild(interaction), managerEmbed);
-
     // cancel pending voice check
     if (voiceCheckTimers.has(username)) {
       clearTimeout(voiceCheckTimers.get(username));
