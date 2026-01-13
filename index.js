@@ -79,41 +79,33 @@ function formatSession(startISO, endISO) {
   return `${datePart}, ${timePart}`;
 }
 
-async function checkVoiceAndAutoClockOut(username, memberId, guild, interaction) {
-  // Fetch the member fresh
-  let member;
-  try {
-    member = await guild.members.fetch(memberId);
-  } catch {
-    member = null;
-  }
+async function checkVoiceAndAutoClockOut(username, userId, guild) {
+  const voiceState = guild.voiceStates.cache.get(userId);
 
-  const inVoice = member?.voice?.channel;
-
-  if (inVoice) {
-    // User joined voice, no action needed
-    console.log(`✅ ${username} is in voice channel: ${inVoice.name}`);
+  if (voiceState?.channel) {
+    console.log(`✅ ${username} still in voice: ${voiceState.channel.name}`);
     return;
   }
 
-  // User is NOT in voice, auto clock out
   await forceClockOut(username);
 
-  try {
-    await interaction.followUp({
-      embeds: [{
-        title: "⛔ Auto Clocked Out",
-        color: 0xe67e22,
-        fields: [
-          { name: "👤 User", value: username },
-          { name: "📍 Reason", value: "Not in a public voice channel after 5 minutes" },
-          { name: "⚠️ Reminder", value: "**REMINDER: UPDATE AD SPENT**" },
-        ],
-        timestamp: new Date().toISOString(),
-      }],
-    });
-  } catch {}
+  console.log(`⛔ Auto clocked out: ${username} (not in voice)`);
+
+  // DM managers
+  const embed = {
+    title: "⛔ Auto Clocked Out",
+    color: 0xe67e22,
+    fields: [
+      { name: "👤 User", value: username },
+      { name: "📍 Reason", value: "Not in a public voice channel after 5 minutes" },
+      { name: "⚠️ Reminder", value: "**REMINDER: UPDATE AD SPENT**" },
+    ],
+    timestamp: new Date().toISOString(),
+  };
+
+  await dmManagers(guild, embed);
 }
+
 
 
 async function loadFromDisk() {
@@ -388,40 +380,43 @@ client.on("interactionCreate", async interaction => {
     const username = getUsername(interaction);
   
     if (!timesheet[username]) timesheet[username] = { logs: [] };
-    if (timesheet[username].active) return interaction.editReply("❌ Already clocked in.");
+    if (timesheet[username].active)
+      return interaction.editReply("❌ Already clocked in.");
   
     const start = nowISO();
     timesheet[username].active = start;
     await persist();
   
-    const userId = member.id;
-    const guild = getGuild(interaction);
+    const userId = interaction.user.id;
+    const guild = interaction.guild;
   
-    // --- Reminder after 2.5 minutes ---
+    // CLEAR old timers
+    if (voiceCheckTimers.has(userId)) {
+      clearTimeout(voiceCheckTimers.get(userId));
+      voiceCheckTimers.delete(userId);
+    }
+  
+    // ---- 2.5 MIN REMINDER ----
     const reminderTimer = setTimeout(async () => {
       await loadFromDisk();
       if (!timesheet[username]?.active) return;
   
-      let memberFresh;
-      try { memberFresh = await guild.members.fetch(userId); } catch {}
-      const inVoice = memberFresh?.voice?.channel;
-  
-      if (!inVoice) {
+      const voiceState = guild.voiceStates.cache.get(userId);
+      if (!voiceState?.channel) {
         try {
-          await interaction.followUp({
-            content: `⏳ Reminder: ${username}, please join a public voice channel within 2.5 minutes or you'll be auto clocked out.`,
-          });
+          await interaction.user.send(
+            "⏳ Reminder: Join a public voice channel within 2.5 minutes or you will be auto clocked out."
+          );
         } catch {}
       }
   
-      // --- Auto clock-out 2.5 minutes later ---
-      const autoClockOutTimer = setTimeout(() => {
-        checkVoiceAndAutoClockOut(username, userId, guild, interaction);
-      }, 150000); // 2.5 min
+      // ---- FINAL AUTO CLOCK OUT (5 MIN TOTAL) ----
+      const autoOutTimer = setTimeout(() => {
+        checkVoiceAndAutoClockOut(username, userId, guild);
+      }, 150000);
   
-      voiceCheckTimers.set(userId, autoClockOutTimer);
-  
-    }, 150000); // first 2.5 min reminder
+      voiceCheckTimers.set(userId, autoOutTimer);
+    }, 150000);
   
     voiceCheckTimers.set(userId, reminderTimer);
   
@@ -476,9 +471,13 @@ client.on("interactionCreate", async interaction => {
   
     await persist();
     // cancel pending voice check
-    if (voiceCheckTimers.has(username)) {
-      clearTimeout(voiceCheckTimers.get(username));
-      voiceCheckTimers.delete(username);
+    const userId = interaction.user.id;
+    
+    if (voiceCheckTimers.has(userId)) {
+      clearTimeout(voiceCheckTimers.get(userId));
+      voiceCheckTimers.delete(userId);
+    }
+
     }
 
     const voiceChannel =
