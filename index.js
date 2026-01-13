@@ -488,30 +488,52 @@ client.on("interactionCreate", async interaction => {
     const sub = interaction.options.getSubcommand(false);
   
     // ===== RESET (MANAGER ONLY) =====
+    // ===== RESET (MANAGER ONLY, USERNAME-ONLY) =====
     if (sub === "reset") {
-      if (!hasManagerRole(interaction.member))
+      if (!hasManagerRole(interaction.member)) {
         return interaction.editReply("❌ Managers only.");
-  
+      }
+    
+      await loadFromDisk();
+      if (timesheet?.undefined) {
+        delete timesheet.undefined;
+        await persist();
+      }
+      // sanitize corrupted keys
+      if (timesheet.undefined) {
+        delete timesheet.undefined;
+      }
+    
       let history = {};
       try {
         history = JSON.parse(
           await fs.readFile("./timesheetHistory.json", "utf8")
         );
       } catch {}
-  
+    
       const stamp = new Date().toISOString();
-      history[stamp] = timesheet;
-  
+    
+      // DEEP COPY (important)
+      history[stamp] = JSON.parse(JSON.stringify(timesheet));
+    
       await fs.writeFile(
         "./timesheetHistory.json",
         JSON.stringify(history, null, 2)
       );
-  
+    
+      // clear live timers
+      for (const timer of liveStatusTimers.values()) {
+        clearInterval(timer);
+      }
+      liveStatusTimers.clear();
+    
+      // reset timesheet
       timesheet = {};
       await persist();
-  
+    
       return interaction.editReply("✅ Timesheet reset & archived.");
     }
+
   
     // ===== VIEW =====
     // ===== TIMESHEET VIEW (USERNAME ONLY) =====
