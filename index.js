@@ -508,13 +508,15 @@ client.on("interactionCreate", async interaction => {
       if (!hasManagerRole(member)) {
         return interaction.editReply("❌ Managers only.");
       }
-
     
       await loadFromDisk();
       if (timesheet?.undefined) {
         delete timesheet.undefined;
         await persist();
       }
+      process.on("unhandledRejection", err => {
+        console.error("Unhandled rejection:", err);
+      });
       // sanitize corrupted keys
       if (timesheet.undefined) {
         delete timesheet.undefined;
