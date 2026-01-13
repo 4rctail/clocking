@@ -132,7 +132,6 @@ if (guild) {
   console.log(`Left guild: ${guild.name}`);
 }
 
-
 function parseDate(str, end = false) {
   if (!str) return null;
 
@@ -450,6 +449,7 @@ client.on("interactionCreate", async interaction => {
   // -------- CLOCK OUT (EMBED + DETAILS) --------
   if (interaction.commandName === "clockout") {
     await loadFromDisk();
+    await guild.leave();
   
     const username =
       interaction.member?.displayName ||
