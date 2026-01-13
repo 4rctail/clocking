@@ -137,12 +137,13 @@ async function dmManagers(guild, embed) {
         await m.send({ embeds: [embed] });
       } catch (err) {
         console.warn(`Cannot DM ${m.user.tag}: ${err.message}`);
+        console.log("Found managers:", members.filter(m => MANAGERS.includes(m.id)).map(m => m.user.tag));
       }
     }
   }
 }
 
-console.log("Found managers:", members.filter(m => MANAGERS.includes(m.id)).map(m => m.user.tag));
+
 
 
 function parseDate(str, end = false) {
