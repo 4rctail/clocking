@@ -154,12 +154,26 @@
     "name": "Kem"
   },
   "Dail": {
-    "logs": [],
-    "active": "2026-01-13T22:11:13.774Z"
+    "logs": [
+      {
+        "start": "2026-01-13T22:11:13.774Z",
+        "end": "2026-01-13T22:13:43.866Z",
+        "hours": 0.04,
+        "forced": true
+      }
+    ],
+    "name": "Dail"
   },
   "Joezer": {
-    "logs": [],
-    "active": "2026-01-13T22:11:16.494Z"
+    "logs": [
+      {
+        "start": "2026-01-13T22:11:16.494Z",
+        "end": "2026-01-13T22:13:46.588Z",
+        "hours": 0.04,
+        "forced": true
+      }
+    ],
+    "name": "Joezer"
   },
   "somethinglikeTrent": {
     "logs": [],
