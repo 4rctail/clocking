@@ -378,21 +378,19 @@ client.on("interactionCreate", async interaction => {
 
   // -------- CLOCK IN --------
   // -------- CLOCK IN (EMBED) --------
+  // -------- CLOCK IN (VOICE CHECK – FIXED) --------
   if (interaction.commandName === "clockin") {
-    const userId = interaction.user.id;
-    const guild = interaction.guild;
+    const username = getUsername(interaction);
   
-    // 🔥 CORRECT VOICE CHECK
-    const voiceState = guild.voiceStates.cache.get(userId);
-    const inVoice = voiceState?.channel;
+    // ✅ USE THE SAME LOGIC AS AUTO-CLOCKOUT
+    const voiceChannel = interaction.member?.voice?.channel;
   
-    if (!inVoice) {
+    if (!voiceChannel) {
       return interaction.editReply({
         content: "❌ **Join Public Voice Call before Clocking In**",
       });
     }
-  
-    const username = getUsername(interaction);
+
 
     // ----- CONTINUE CLOCK IN LOGIC BELOW -----
 
