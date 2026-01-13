@@ -514,22 +514,27 @@ client.on("interactionCreate", async interaction => {
     }
   
     // ===== VIEW =====
-    // ===== VIEW =====
-    await loadFromDisk(); // 🔒 authoritative read
+    // ===== VIEW (USERNAME-ONLY, SAFE) =====
+    await loadFromDisk(); // authoritative read
     
-    const targetMember =
-      interaction.options.getMember("user") || interaction.member;
+    const requesterName = resolveDisplayName(interaction, interaction.member);
     
-    const userData = timesheet[targetMember.id];
+    // find user by name ONLY
+    let userData = null;
+    
+    for (const u of Object.values(timesheet)) {
+      if (!u || !u.name) continue;
+      if (u.name === requesterName) {
+        userData = u;
+        break;
+      }
+    }
+    
     if (!userData || !Array.isArray(userData.logs) || userData.logs.length === 0) {
       return interaction.editReply("📭 No records found.");
     }
     
-    const targetName =
-      targetMember.displayName ||
-      userData.name ||
-      "Unknown User";
-    
+    // optional date filters
     const startStr = interaction.options.getString("start");
     const endStr   = interaction.options.getString("end");
     
@@ -569,7 +574,7 @@ client.on("interactionCreate", async interaction => {
         title: "🧾 Timesheet",
         color: 0x3498db,
         fields: [
-          { name: "👤 User", value: targetName, inline: true },
+          { name: "👤 User", value: requesterName, inline: true },
           { name: "📅 Range", value: rangeLabel, inline: true },
           { name: "🧮 Sessions", value: String(count), inline: true },
           {
