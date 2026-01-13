@@ -25,6 +25,10 @@ const client = new Client({
   ],
 });
 
+function getGuild(interaction) {
+  return interaction.guild ?? client.guilds.cache.first();
+}
+
 
 function resolveDisplayName(interaction, member) {
   if (member?.displayName) return member.displayName;
@@ -120,6 +124,8 @@ function formatElapsedLive(startISO) {
 
 // Track live status updates per user
 const liveStatusTimers = new Map();
+// Voice enforcement timers (per username)
+const voiceCheckTimers = new Map();
 
 // =======================
 // IN-MEMORY STATE
@@ -146,6 +152,29 @@ const formatDate = iso =>
     minute: "2-digit",
     second: "2-digit",
   });
+
+async function forceClockOut(username) {
+  const userData = timesheet[username];
+  if (!userData?.active) return;
+
+  const start = userData.active;
+  const end = nowISO();
+  const hours = diffHours(start, end);
+
+  userData.logs.push({
+    start,
+    end,
+    hours: Math.round(hours * 100) / 100,
+    forced: true,
+  });
+
+  delete userData.active;
+  userData.name = username;
+
+  await persist();
+
+  console.log(`⛔ Auto clock-out: ${username} (not in voice)`);
+}
 
 
 function elapsed(startISO) {
@@ -333,7 +362,64 @@ client.on("interactionCreate", async interaction => {
     timesheet[username].active = start;
   
     await persist();
-  
+    // ---- VOICE CHECK (2.5 MINUTES) ----
+    if (voiceCheckTimers.has(username)) {
+      clearTimeout(voiceCheckTimers.get(username));
+    }
+    
+    const guild = getGuild(interaction);
+    
+    const timer = setTimeout(async () => {
+      await loadFromDisk();
+    
+      if (!timesheet[username]?.active) {
+        voiceCheckTimers.delete(username);
+        return;
+      }
+    
+      let member = null;
+      try {
+        const members = await guild.members.fetch();
+        member = members.find(m =>
+          m.displayName === username ||
+          m.user.username === username ||
+          m.user.globalName === username
+        );
+      } catch {}
+    
+      const inVoice = member?.voice?.channel;
+    
+      if (!inVoice && timesheet[username]?.active) {
+        await forceClockOut(username);
+    
+        try {
+          await interaction.followUp({
+            embeds: [{
+              title: "⛔ Auto Clocked Out",
+              color: 0xe67e22,
+              fields: [
+                { name: "👤 User", value: username },
+                {
+                  name: "📍 Reason",
+                  value: "Not in a voice channel after 2.5 minutes",
+                },
+                {
+                  name: "⚠️ Reminder",
+                  value: "**REMINDER: UPDATE AD SPENT**",
+                },
+              ],
+              timestamp: new Date().toISOString(),
+            }],
+          });
+        } catch {}
+      }
+    
+      voiceCheckTimers.delete(username);
+    }, 150000); // 2.5 minutes
+    
+    voiceCheckTimers.set(username, timer);
+
+
     return interaction.editReply({
       embeds: [{
         title: "🟢 Clocked In",
@@ -383,7 +469,12 @@ client.on("interactionCreate", async interaction => {
     userData.name = username;
   
     await persist();
-  
+    // cancel pending voice check
+    if (voiceCheckTimers.has(username)) {
+      clearTimeout(voiceCheckTimers.get(username));
+      voiceCheckTimers.delete(username);
+    }
+
     const voiceChannel =
       interaction.member?.voice?.channel?.name || "Not in voice";
   
