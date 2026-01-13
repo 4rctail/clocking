@@ -125,12 +125,7 @@ async function loadFromDisk() {
   }
 }
 
-// Leave a specific guild by ID
-const guild = client.guilds.cache.get("1405067956261621760");
-if (guild) {
-  await guild.leave();
-  console.log(`Left guild: ${guild.name}`);
-}
+
 
 function parseDate(str, end = false) {
   if (!str) return null;
@@ -449,7 +444,6 @@ client.on("interactionCreate", async interaction => {
   // -------- CLOCK OUT (EMBED + DETAILS) --------
   if (interaction.commandName === "clockout") {
     await loadFromDisk();
-    await guild.leave();
   
     const username =
       interaction.member?.displayName ||
@@ -625,6 +619,14 @@ client.on("interactionCreate", async interaction => {
   }
   
 
+  if (interaction.commandName === "leave") {
+    if (!interaction.guild) {
+      return interaction.reply({ content: "❌ No guild context", ephemeral: true });
+    }
+  
+    await interaction.reply("👋 Leaving server...");
+    await interaction.guild.leave();
+  }
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
