@@ -144,8 +144,14 @@
     "name": "Kyeeeee"
   },
   "Justin Ace": {
-    "logs": [],
-    "active": "2026-01-14T05:11:06.608Z"
+    "logs": [
+      {
+        "start": "2026-01-14T05:11:06.608Z",
+        "end": "2026-01-14T13:00:47.220Z",
+        "hours": 7.827947777777778
+      }
+    ],
+    "name": "Justin Ace"
   },
   "tristan": {
     "logs": [
