@@ -188,8 +188,14 @@
     "name": "tristan"
   },
   "Garretdita": {
-    "logs": [],
-    "active": "2026-01-14T05:30:20.139Z"
+    "logs": [
+      {
+        "start": "2026-01-14T05:30:20.139Z",
+        "end": "2026-01-14T15:16:06.092Z",
+        "hours": 9.762764722222222
+      }
+    ],
+    "name": "Garretdita"
   },
   "Rosel": {
     "logs": [
