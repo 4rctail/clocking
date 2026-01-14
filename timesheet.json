@@ -1,15 +1,8 @@
 {
-  "asd": {
-    "logs": [
-      {
-        "start": "2026-01-13T22:21:24.776Z",
-        "end": "2026-01-13T22:24:07.066Z",
-        "hours": 0.045080555555555554
-      }
-    ],
-    "name": "asd"
-  },
-  "Joezer": {
+  "385856951114006528": {
+    "userId": "385856951114006528",
+    "name": "Joezer",
+    "lastKnownNames": ["Joezer"],
     "logs": [
       {
         "start": "2026-01-13T22:11:00.000Z",
@@ -17,9 +10,13 @@
         "hours": 0.3387
       }
     ],
-    "name": "Joezer"
+    "active": null
   },
-  "Kem": {
+
+  "427818815443697664": {
+    "userId": "427818815443697664",
+    "name": "Kem",
+    "lastKnownNames": ["Kem"],
     "logs": [
       {
         "start": "2026-01-13T22:11:00.000Z",
@@ -27,9 +24,13 @@
         "hours": 1.3972
       }
     ],
-    "name": "Kem"
+    "active": null
   },
-  "Dail": {
+
+  "1459482347966566537": {
+    "userId": "1459482347966566537",
+    "name": "Dail",
+    "lastKnownNames": ["Dail"],
     "logs": [
       {
         "start": "2026-01-13T22:11:00.000Z",
@@ -37,9 +38,13 @@
         "hours": 1.7794
       }
     ],
-    "name": "Dail"
+    "active": null
   },
-  "somethinglikeTrent": {
+
+  "727144862016733274": {
+    "userId": "727144862016733274",
+    "name": "somethinglikeTrent",
+    "lastKnownNames": ["somethinglikeTrent"],
     "logs": [
       {
         "start": "2026-01-13T22:11:00.000Z",
@@ -47,21 +52,37 @@
         "hours": 2.0119
       }
     ],
-    "name": "somethinglikeTrent"
+    "active": null
   },
-  "NOTFOUND": {
+
+  "726049317256691734": {
+    "userId": "726049317256691734",
+    "name": "NOTFOUND",
+    "lastKnownNames": ["NOTFOUND"],
     "logs": [],
     "active": "2026-01-13T22:28:22.490Z"
   },
-  "charles": {
+
+  "1458447734968160383": {
+    "userId": "1458447734968160383",
+    "name": "charles",
+    "lastKnownNames": ["charles"],
     "logs": [],
     "active": "2026-01-13T23:53:55.397Z"
   },
-  "Aleah": {
+
+  "1457219680573063232": {
+    "userId": "1457219680573063232",
+    "name": "Aleah",
+    "lastKnownNames": ["Aleah"],
     "logs": [],
     "active": "2026-01-13T23:57:14.135Z"
   },
-  "M4Vs": {
+
+  "1452657680090136664": {
+    "userId": "1452657680090136664",
+    "name": "M4Vs",
+    "lastKnownNames": ["M4Vs"],
     "logs": [
       {
         "start": "2026-01-13T23:33:00.000Z",
@@ -69,39 +90,67 @@
         "hours": 8.7967
       }
     ],
-    "name": "M4Vs"
+    "active": null
   },
-  "Ace": {
+
+  "1138748362221441034": {
+    "userId": "1138748362221441034",
+    "name": "Ace",
+    "lastKnownNames": ["Ace"],
     "logs": [
       {
         "start": "2026-01-13T23:33:00.000Z",
         "end": "2026-01-14T08:13:37.822Z",
-        "hours": 8.6770
+        "hours": 8.677
       }
     ],
-    "name": "Ace"
+    "active": null
   },
-  "Meann": {
+
+  "1448238106342854699": {
+    "userId": "1448238106342854699",
+    "name": "Meann",
+    "lastKnownNames": ["Meann"],
     "logs": [],
     "active": "2026-01-14T04:14:27.667Z"
   },
-  "RxZxl": {
+
+  "295347928753766402": {
+    "userId": "295347928753766402",
+    "name": "RxZxl",
+    "lastKnownNames": ["RxZxl"],
     "logs": [],
     "active": "2026-01-14T04:30:32.607Z"
   },
-  "4rc": {
+
+  "769554444534153238": {
+    "userId": "769554444534153238",
+    "name": "4rc",
+    "lastKnownNames": ["4rc"],
     "logs": [],
     "active": "2026-01-14T04:35:21.678Z"
   },
-  "Rain": {
+
+  "1207725061746720829": {
+    "userId": "1207725061746720829",
+    "name": "Rain",
+    "lastKnownNames": ["Rain"],
     "logs": [],
     "active": "2026-01-14T05:01:54.000Z"
   },
-  "Elliemalvar": {
+
+  "1459446305859567778": {
+    "userId": "1459446305859567778",
+    "name": "Elliemalvar",
+    "lastKnownNames": ["Elliemalvar"],
     "logs": [],
     "active": "2026-01-14T05:06:41.916Z"
   },
-  "Kyeeeee": {
+
+  "1460813978962890762": {
+    "userId": "1460813978962890762",
+    "name": "Kyeeeee",
+    "lastKnownNames": ["Kyeeeee"],
     "logs": [
       {
         "start": "2026-01-14T05:10:06.621Z",
@@ -109,13 +158,21 @@
         "hours": 3.1835352777777777
       }
     ],
-    "name": "Kyeeeee"
+    "active": null
   },
-  "Justin Ace": {
+
+  "851128738510667876": {
+    "userId": "851128738510667876",
+    "name": "Justin Ace",
+    "lastKnownNames": ["Justin Ace"],
     "logs": [],
     "active": "2026-01-14T05:11:06.608Z"
   },
-  "tristan": {
+
+  "1420347965024768094": {
+    "userId": "1420347965024768094",
+    "name": "tristan",
+    "lastKnownNames": ["tristan"],
     "logs": [
       {
         "start": "2026-01-14T05:11:23.820Z",
@@ -123,17 +180,29 @@
         "hours": 3.379551388888889
       }
     ],
-    "name": "tristan"
+    "active": null
   },
-  "Garretdita": {
+
+  "1401902812299919520": {
+    "userId": "1401902812299919520",
+    "name": "Garretdita",
+    "lastKnownNames": ["Garretdita"],
     "logs": [],
     "active": "2026-01-14T05:30:20.139Z"
   },
-  "Rosel": {
+
+  "1440654281526087690": {
+    "userId": "1440654281526087690",
+    "name": "Rosel",
+    "lastKnownNames": ["Rosel"],
     "logs": [],
     "active": "2026-01-14T06:20:14.303Z"
   },
-  "Mond": {
+
+  "434901904670064650": {
+    "userId": "434901904670064650",
+    "name": "Mond",
+    "lastKnownNames": ["Mond"],
     "logs": [],
     "active": "2026-01-14T08:00:45.411Z"
   }
