@@ -57,10 +57,14 @@
         "start": "2026-01-13T22:11:00.000Z",
         "end": "2026-01-14T00:11:43.302Z",
         "hours": 2.0119
+      },
+      {
+        "start": "2026-01-14T17:39:48.483Z",
+        "end": "2026-01-14T21:54:26.763Z",
+        "hours": 4.243966666666667
       }
     ],
-    "name": "somethinglikeTrent",
-    "active": "2026-01-14T17:39:48.483Z"
+    "name": "somethinglikeTrent"
   },
   "NOTFOUND": {
     "logs": [
