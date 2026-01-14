@@ -26,6 +26,23 @@ const client = new Client({
 });
 
 
+function resolveDisplayName(interaction, member) {
+  if (member?.displayName) return member.displayName;
+  if (member?.nickname) return member.nickname;
+  if (member?.user?.globalName) return member.user.globalName;
+  if (member?.user?.username) return member.user.username;
+  return interaction.user.globalName
+      || interaction.user.username
+      || "Unknown User";
+}
+function getUsername(interaction) {
+  return (
+    interaction.member?.displayName ||
+    interaction.user?.globalName ||
+    interaction.user?.username ||
+    "unknown"
+  );
+}
 
 function formatSession(startISO, endISO) {
   const dateOpts = {
@@ -65,71 +82,9 @@ async function loadFromDisk() {
     timesheet = JSON.parse(raw);
   } catch {
     timesheet = {};
-    return;
-  }
-
-  // sanitize corrupted entries
-  for (const [key, val] of Object.entries(timesheet)) {
-    if (!val?.userId || key !== val.userId) {
-      delete timesheet[key];
-    }
   }
 }
 
-
-// =======================
-// STRICT USER RESOLUTION (ID-FIRST)
-// =======================
-function resolveStrictUser(interaction) {
-  const user = interaction.user;
-  const member = interaction.member;
-
-  if (!user?.id) return null;
-
-  const name =
-    member?.displayName ||
-    user.globalName ||
-    user.username ||
-    null;
-
-  if (!name) return null;
-
-  return {
-    userId: user.id,
-    name,
-  };
-}
-
-function ensureUserRecord(userId, name) {
-  if (!userId || !name) return null;
-
-  if (!timesheet[userId]) {
-    timesheet[userId] = {
-      userId,
-      name,
-      lastKnownNames: [name],
-      logs: [],
-      active: null,
-    };
-    return timesheet[userId];
-  }
-
-  const record = timesheet[userId];
-
-  // handle name change
-  if (record.name !== name) {
-    if (!record.lastKnownNames.includes(record.name)) {
-      record.lastKnownNames.push(record.name);
-    }
-    record.name = name;
-  }
-
-  // hard sanitize
-  if (!Array.isArray(record.logs)) record.logs = [];
-  if (record.active === undefined) record.active = null;
-
-  return record;
-}
 
 function parseDate(str, end = false) {
   if (!str) return null;
@@ -322,16 +277,16 @@ client.on("interactionCreate", async interaction => {
     (await interaction.guild.members.fetch(interaction.user.id));
   
   const userId = member.id;
+  const displayName = resolveDisplayName(interaction, member);
   
     
-    // -------- TOTAL HOURS (ALL USERS) --------
     // -------- TOTAL HOURS (ALL USERS) --------
     if (interaction.commandName === "totalhr") {
       await loadFromDisk();
     
       let lines = [];
     
-      for (const user of Object.values(timesheet)) {
+      for (const [username, user] of Object.entries(timesheet)) {
         if (!user?.logs?.length) continue;
     
         let total = 0;
@@ -342,7 +297,7 @@ client.on("interactionCreate", async interaction => {
         total = Math.round(total * 100) / 100;
         if (total <= 0) continue;
     
-        lines.push(`**${user.name}** — ${total.toFixed(2)}h`);
+        lines.push(`**${username}** — ${total.toFixed(2)}h`);
       }
     
       if (!lines.length) {
@@ -361,23 +316,22 @@ client.on("interactionCreate", async interaction => {
     }
 
 
-
   // -------- CLOCK IN --------
+  // -------- CLOCK IN (EMBED) --------
   if (interaction.commandName === "clockin") {
-    await loadFromDisk();
+    const username = getUsername(interaction);
   
-    const user = resolveStrictUser(interaction);
-    if (!user) {
-      return interaction.editReply("❌ Cannot resolve user.");
+    if (!timesheet[username]) {
+      timesheet[username] = { logs: [] };
     }
   
-    const record = ensureUserRecord(user.userId, user.name);
-  
-    if (record.active) {
+    if (timesheet[username].active) {
       return interaction.editReply("❌ Already clocked in.");
     }
   
-    record.active = nowISO();
+    const start = nowISO();
+    timesheet[username].active = start;
+  
     await persist();
   
     return interaction.editReply({
@@ -385,15 +339,13 @@ client.on("interactionCreate", async interaction => {
         title: "🟢 Clocked In",
         color: 0x2ecc71,
         fields: [
-          { name: "👤 User", value: record.name },
-          { name: "🆔 User ID", value: record.userId },
-          { name: "⏱ Start", value: formatDate(record.active) },
+          { name: "👤 User", value: username },
+          { name: "⏱ Start Time", value: formatDate(start) },
         ],
-        timestamp: new Date().toISOString(),
+        timestamp: new Date(start).toISOString(),
       }],
     });
   }
-
 
 
   // -------- CLOCK OUT --------
@@ -401,52 +353,64 @@ client.on("interactionCreate", async interaction => {
   if (interaction.commandName === "clockout") {
     await loadFromDisk();
   
-    const user = resolveStrictUser(interaction);
-    if (!user) {
-      return interaction.editReply("❌ Cannot resolve user.");
-    }
+    const username =
+      interaction.member?.displayName ||
+      interaction.user?.globalName ||
+      interaction.user?.username;
   
-    const record = ensureUserRecord(user.userId, user.name);
+    const userData = timesheet[username];
   
-    if (!record.active) {
+    if (!userData?.active) {
       return interaction.editReply("❌ Not clocked in.");
     }
   
-    const start = record.active;
-    const end = nowISO();
-    const hours = diffHours(start, end);
+    const start = userData.active;
+    const end = new Date().toISOString();
+    const hours = (new Date(end) - new Date(start)) / 3600000;
     const rounded = Math.round(hours * 100) / 100;
-
-    record.logs.push({
+  
+    // Push to logs
+    userData.logs.push({
       start,
       end,
       hours,
     });
   
-    record.active = null;
+    // Remove active session
+    delete userData.active;
+  
+    // Save username
+    userData.name = username;
+  
     await persist();
   
-    return interaction.editReply({
-      embeds: [{
-        title: "🔴 Clocked Out",
-        color: 0xe74c3c,
-        fields: [
-          { name: "👤 User", value: record.name },
-          { name: "▶️ Started", value: formatDate(start), inline: false },
-          { name: "⏹ Ended", value: formatDate(end), inline: false },
-          { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
-          {
-            name: "⚠️ Reminder",
-            value: "**REMINDER: UPDATE AD SPENT**",
-            inline: false,
-          },
-        ],
-        timestamp: new Date().toISOString(),
-      }],
-    });
+    const voiceChannel =
+      interaction.member?.voice?.channel?.name || "Not in voice";
+  
+    // Build the embed
+    const embed = {
+      title: "🔴 Clocked Out",
+      color: 0xe74c3c,
+      fields: [
+        { name: "👤 User", value: username, inline: true },
+        { name: "📍 Voice Channel", value: voiceChannel, inline: true },
+        { name: "▶️ Started", value: formatDate(start), inline: false },
+        { name: "⏹ Ended", value: formatDate(end), inline: false },
+        { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
+        {
+          name: "⚠️ Reminder",
+          value: "**REMINDER: UPDATE AD SPENT**",
+          inline: false,
+        },
+      ],
+      footer: { text: "Time Tracker" },
+      timestamp: new Date().toISOString(),
+    };
+  
+    return interaction.editReply({ embeds: [embed] });
   }
 
-
+  
 
   // -------- STATUS (EMBED + LIVE UPDATE) --------
   // -------- STATUS (USERNAME ONLY, SAFE) --------
@@ -455,6 +419,12 @@ client.on("interactionCreate", async interaction => {
     if (timesheet.undefined) {
       delete timesheet.undefined;
       await persist();
+    }
+
+  
+    const username = getUsername(interaction);
+    if (!username) {
+      return interaction.editReply("❌ Cannot resolve username.");
     }
   
     const userData = timesheet[username];
@@ -538,7 +508,7 @@ client.on("interactionCreate", async interaction => {
         title: "⚪ Status: Clocked Out",
         color: 0x95a5a6,
         fields: [
-          { name: "👤 User", value: record.name, inline: true },
+          { name: "👤 User", value: username, inline: true },
           {
             name: "⏱ Total Recorded Time",
             value: `${Math.round(total * 100) / 100}h`,
@@ -625,37 +595,28 @@ client.on("interactionCreate", async interaction => {
   
     // ===== VIEW =====
     // ===== TIMESHEET VIEW (USERNAME ONLY) =====
-    // ===== TIMESHEET VIEW (SELF OR OTHER USER) =====
     await loadFromDisk();
+    
+    const username =
+      interaction.member?.displayName ||
+      interaction.user?.globalName ||
+      interaction.user?.username;
     
     if (timesheet.undefined) {
       delete timesheet.undefined;
       await persist();
     }
-    
-    // get optional target user
-    const targetMember =
-      interaction.options.getMember("user") ||
-      interaction.member ||
-      (await interaction.guild.members.fetch(interaction.user.id));
-    
-    if (!targetMember?.id) {
-      return interaction.editReply("❌ Cannot resolve target user.");
+
+    if (!username) {
+      return interaction.editReply("❌ Cannot resolve username.");
     }
     
-    const targetUserId = targetMember.id;
-    const targetName =
-      targetMember.displayName ||
-      targetMember.user?.globalName ||
-      targetMember.user?.username;
+    const userData = timesheet[username];
     
-    const record = timesheet[targetUserId];
-    
-    if (!record || !Array.isArray(record.logs) || record.logs.length === 0) {
-      return interaction.editReply(`📭 No records found for **${targetName}**.`);
+    if (!userData || !Array.isArray(userData.logs) || userData.logs.length === 0) {
+      return interaction.editReply("📭 No records found.");
     }
     
-    // date range
     const startStr = interaction.options.getString("start");
     const endStr   = interaction.options.getString("end");
     
@@ -666,7 +627,7 @@ client.on("interactionCreate", async interaction => {
     let lines = [];
     let count = 0;
     
-    for (const l of record.logs) {
+    for (const l of userData.logs) {
       const s = new Date(l.start);
       if ((start && s < start) || (end && s > end)) continue;
     
@@ -682,7 +643,7 @@ client.on("interactionCreate", async interaction => {
     }
     
     if (!count) {
-      return interaction.editReply("📭 No sessions in selected range.");
+      return interaction.editReply("📭 No sessions in range.");
     }
     
     const rangeLabel =
@@ -695,7 +656,7 @@ client.on("interactionCreate", async interaction => {
         title: "🧾 Timesheet",
         color: 0x3498db,
         fields: [
-          { name: "👤 User", value: targetName, inline: true },
+          { name: "👤 User", value: username, inline: true },
           { name: "📅 Range", value: rangeLabel, inline: true },
           { name: "🧮 Sessions", value: String(count), inline: true },
           {
@@ -713,6 +674,7 @@ client.on("interactionCreate", async interaction => {
         timestamp: new Date().toISOString(),
       }],
     });
+
   }
 });  
 // =======================
