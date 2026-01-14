@@ -40,8 +40,14 @@
     "name": "Dail"
   },
   "somethinglikeTrent": {
-    "logs": [],
-    "active": "2026-01-13T22:25:56.314Z"
+    "logs": [
+      {
+        "start": "2026-01-13T22:25:56.314Z",
+        "end": "2026-01-14T00:11:43.302Z",
+        "hours": 1.7630522222222222
+      }
+    ],
+    "name": "somethinglikeTrent"
   },
   "NOTFOUND": {
     "logs": [],
