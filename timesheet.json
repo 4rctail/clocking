@@ -50,8 +50,14 @@
     "name": "somethinglikeTrent"
   },
   "NOTFOUND": {
-    "logs": [],
-    "active": "2026-01-13T22:28:22.490Z"
+    "logs": [
+      {
+        "start": "2026-01-13T22:28:22.490Z",
+        "end": "2026-01-14T11:42:59.598Z",
+        "hours": 13.243641111111112
+      }
+    ],
+    "name": "NOTFOUND"
   },
   "charles": {
     "logs": [],
