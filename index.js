@@ -625,23 +625,37 @@ client.on("interactionCreate", async interaction => {
   
     // ===== VIEW =====
     // ===== TIMESHEET VIEW (USERNAME ONLY) =====
+    // ===== TIMESHEET VIEW (SELF OR OTHER USER) =====
     await loadFromDisk();
-
     
     if (timesheet.undefined) {
       delete timesheet.undefined;
       await persist();
     }
-
-    const user = resolveStrictUser(interaction);
-    if (!user) return interaction.editReply("❌ Cannot resolve user.");
-
-    const record = timesheet[user.userId];
-    if (!record || !Array.isArray(record.logs) || record.logs.length === 0) {
-      return interaction.editReply("📭 No records found.");
-    }
-
     
+    // get optional target user
+    const targetMember =
+      interaction.options.getMember("user") ||
+      interaction.member ||
+      (await interaction.guild.members.fetch(interaction.user.id));
+    
+    if (!targetMember?.id) {
+      return interaction.editReply("❌ Cannot resolve target user.");
+    }
+    
+    const targetUserId = targetMember.id;
+    const targetName =
+      targetMember.displayName ||
+      targetMember.user?.globalName ||
+      targetMember.user?.username;
+    
+    const record = timesheet[targetUserId];
+    
+    if (!record || !Array.isArray(record.logs) || record.logs.length === 0) {
+      return interaction.editReply(`📭 No records found for **${targetName}**.`);
+    }
+    
+    // date range
     const startStr = interaction.options.getString("start");
     const endStr   = interaction.options.getString("end");
     
@@ -668,7 +682,7 @@ client.on("interactionCreate", async interaction => {
     }
     
     if (!count) {
-      return interaction.editReply("📭 No sessions in range.");
+      return interaction.editReply("📭 No sessions in selected range.");
     }
     
     const rangeLabel =
@@ -681,7 +695,7 @@ client.on("interactionCreate", async interaction => {
         title: "🧾 Timesheet",
         color: 0x3498db,
         fields: [
-          { name: "👤 User", value: username, inline: true },
+          { name: "👤 User", value: targetName, inline: true },
           { name: "📅 Range", value: rangeLabel, inline: true },
           { name: "🧮 Sessions", value: String(count), inline: true },
           {
@@ -699,7 +713,6 @@ client.on("interactionCreate", async interaction => {
         timestamp: new Date().toISOString(),
       }],
     });
-
   }
 });  
 // =======================
