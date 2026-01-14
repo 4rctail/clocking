@@ -122,8 +122,14 @@
     "name": "Rain"
   },
   "Elliemalvar": {
-    "logs": [],
-    "active": "2026-01-14T05:06:41.916Z"
+    "logs": [
+      {
+        "start": "2026-01-14T05:06:41.916Z",
+        "end": "2026-01-14T12:15:44.704Z",
+        "hours": 7.150774444444444
+      }
+    ],
+    "name": "Elliemalvar"
   },
   "Kyeeeee": {
     "logs": [
