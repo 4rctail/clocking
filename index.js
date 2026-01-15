@@ -8,7 +8,7 @@ import { startKeepAlive } from "./keepAlive.js";
 // =======================
 const PH_TZ = "Asia/Manila";
 const DATA_FILE = "./timesheet.json";
-const MANAGERS = ["4rc", "Rich"];
+const MANAGER_IDS = ["123456789012345678", "987654321098765432"];
 const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
@@ -25,24 +25,91 @@ const client = new Client({
   ],
 });
 
+// Prevent crashes from unhandled Discord errors
+client.on("error", (err) => {
+  console.error("Discord client error:", err);
+});
 
-function resolveDisplayName(interaction, member) {
-  if (member?.displayName) return member.displayName;
-  if (member?.nickname) return member.nickname;
-  if (member?.user?.globalName) return member.user.globalName;
-  if (member?.user?.username) return member.user.username;
-  return interaction.user.globalName
-      || interaction.user.username
-      || "Unknown User";
+let timesheet = {};
+let gitCommitTimer = null;
+
+function mergeUserData(oldKey, newUserId) {
+  const oldData = timesheet[oldKey];
+  if (!oldData) return;
+
+  // If target doesn't exist, create it
+  if (!timesheet[newUserId]) {
+    timesheet[newUserId] = {
+      userId: newUserId,
+      name: oldData.name || oldKey,
+      lastKnownNames: oldData.lastKnownNames || [oldData.name || oldKey],
+      logs: [],
+      active: oldData.active || null,
+    };
+  }
+
+  const target = timesheet[newUserId];
+
+  // Merge logs, avoid duplicates
+  const allLogs = [...(target.logs || []), ...(oldData.logs || [])];
+  const seen = new Set();
+  const mergedLogs = [];
+  for (const log of allLogs) {
+    const key = `${log.start}|${log.end}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      mergedLogs.push(log);
+    }
+  }
+  target.logs = mergedLogs;
+
+  // Merge lastKnownNames
+  target.lastKnownNames = Array.from(new Set([
+    ...(target.lastKnownNames || []),
+    ...(oldData.lastKnownNames || []),
+    oldData.name || oldKey
+  ]));
+
+  // Preserve active if target has none
+  if (!target.active && oldData.active) target.active = oldData.active;
+
+  // Preserve name if missing
+  if (!target.name && oldData.name) target.name = oldData.name;
+
+  // Verify logs copied successfully
+  if ((oldData.logs?.length || 0) <= (target.logs?.length || 0)) {
+    delete timesheet[oldKey];
+    console.log(`✅ Merged ${oldKey} → ${newUserId}`);
+  }
 }
-function getUsername(interaction) {
-  return (
-    interaction.member?.displayName ||
-    interaction.user?.globalName ||
-    interaction.user?.username ||
-    "unknown"
-  );
+
+/**
+ * Iterate over all keys and migrate old username keys
+ */
+function autoMergeOldUsers() {
+  const keys = Object.keys(timesheet);
+  for (const key of keys) {
+    const data = timesheet[key];
+    // Skip proper userId entries
+    if (data.userId && data.userId === key) continue;
+
+    // If old key has logs + name
+    if (data.name && data.logs) {
+      // Try to find existing userId entry with same name
+      const targetKey = Object.keys(timesheet).find(
+        k => k !== key && timesheet[k].userId && timesheet[k].name === data.name
+      );
+
+      if (targetKey) {
+        mergeUserData(key, targetKey);
+      } else if (data.userId) {
+        mergeUserData(key, data.userId);
+      }
+    }
+  }
 }
+
+
 
 function formatSession(startISO, endISO) {
   const dateOpts = {
@@ -85,6 +152,104 @@ async function loadFromDisk() {
   }
 }
 
+async function safeEdit(interaction, payload) {
+  try {
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply(payload);
+    } else {
+      await interaction.editReply(payload);
+    }
+  } catch (err) {
+    // Ignore if interaction is unknown or expired
+    if (err.code === 10062) return;
+    console.error("Interaction update failed:", err);
+  }
+}
+
+async function safeGetMember(interaction, userId) {
+  if (!interaction.inGuild()) return null;
+  if (!interaction.guild) return null;
+
+  return (
+    interaction.guild.members.cache.get(userId) ||
+    await interaction.guild.members.fetch(userId).catch(() => null)
+  );
+}
+
+
+// =======================
+// STRICT USER RESOLUTION (ID-FIRST)
+// =======================
+function resolveStrictUser(interaction) {
+  const user = interaction.user;
+  const member = interaction.member;
+
+  if (!user?.id) return null;
+
+  const name =
+    member?.displayName ||
+    user.globalName ||
+    user.username ||
+    null;
+
+  if (!name) return null;
+
+  return {
+    userId: user.id,
+    name,
+  };
+}
+
+function ensureUserRecord(userId, name) {
+  if (!userId || !name) return null;
+
+  if (!timesheet[userId]) {
+    // create new record if doesn't exist
+    timesheet[userId] = {
+      userId,
+      name,
+      lastKnownNames: [name],
+      logs: [],
+      active: null,
+    };
+    return timesheet[userId];
+  }
+
+  const record = timesheet[userId];
+
+  // Update username if changed
+  if (record.name !== name) {
+    if (!record.lastKnownNames.includes(record.name)) {
+      record.lastKnownNames.push(record.name);
+    }
+    record.name = name;
+  }
+
+  // Ensure logs array and active are valid
+  if (!Array.isArray(record.logs)) record.logs = [];
+  if (record.active === undefined) record.active = null;
+
+  return record;
+}
+
+/**
+ * Append new logs safely
+ * Only adds logs that are not duplicates (by start+end)
+ */
+function appendLogs(userId, newLogs) {
+  const record = timesheet[userId];
+  if (!record) return;
+
+  for (const log of newLogs) {
+    const exists = record.logs.some(
+      (l) => l.start === log.start && l.end === log.end
+    );
+    if (!exists) {
+      record.logs.push(log);
+    }
+  }
+}
+
 
 function parseDate(str, end = false) {
   if (!str) return null;
@@ -121,11 +286,78 @@ function formatElapsedLive(startISO) {
 // Track live status updates per user
 const liveStatusTimers = new Map();
 
+/**
+ * Merge old username keys into proper userId entries before saving
+ */
+
+function mergeBeforePersist() {
+  const keys = Object.keys(timesheet);
+
+  for (const key of keys) {
+    const data = timesheet[key];
+    if (!data || typeof data !== "object") continue;
+
+    // Skip already-correct userId records
+    if (data.userId && key === data.userId) continue;
+
+    if (!Array.isArray(data.logs) || !data.name) continue;
+
+    // Find correct target by userId first
+    let target = null;
+
+    if (data.userId && timesheet[data.userId]) {
+      target = timesheet[data.userId];
+    } else {
+      // Fallback: find by name with userId
+      target = Object.values(timesheet).find(
+        u => u.userId && u.name === data.name
+      );
+    }
+
+    if (!target) continue;
+
+    // --- ENSURE STRUCTURE ---
+    target.logs ??= [];
+    target.lastKnownNames ??= [];
+    if (target.active === undefined) target.active = null;
+
+    // --- MERGE LOGS ---
+    for (const log of data.logs) {
+      if (
+        log?.start &&
+        log?.end &&
+        !target.logs.some(l => l.start === log.start && l.end === log.end)
+      ) {
+        target.logs.push(log);
+      }
+    }
+
+    // --- MERGE ACTIVE ---
+    if (!target.active && data.active) {
+      target.active = data.active;
+    }
+
+    // --- MERGE NAMES ---
+    if (data.name && !target.lastKnownNames.includes(data.name)) {
+      target.lastKnownNames.push(data.name);
+    }
+
+    // --- DELETE OLD KEY ---
+    delete timesheet[key];
+    console.log(`✅ Migrated ${key} → ${target.userId}`);
+  }
+}
+
 // =======================
-// IN-MEMORY STATE
+// Updated persist
 // =======================
-let timesheet = {};
-let gitCommitTimer = null;
+async function persist() {
+  mergeBeforePersist(); // merge before writing
+
+  await fs.writeFile(DATA_FILE, JSON.stringify(timesheet, null, 2));
+  queueGitCommit();
+}
+
 
 // =======================
 // TIME HELPERS
@@ -190,14 +422,6 @@ async function loadFromGitHub() {
   console.log("✅ Loaded timesheet from GitHub");
 }
 
-// =======================
-// PERSIST (DISK + QUEUED GIT)
-// =======================
-async function persist() {
-  await fs.writeFile(DATA_FILE, JSON.stringify(timesheet, null, 2));
-  queueGitCommit();
-}
-
 function queueGitCommit() {
   if (gitCommitTimer) return;
 
@@ -257,36 +481,39 @@ async function commitToGitHub() {
   console.log("✅ Timesheet committed to GitHub");
 }
 
-function hasManagerRole(username) {
-  if (!username) return false;
-  return MANAGERS.includes(username);
+function hasManagerRoleById(userId) {
+  return MANAGER_IDS.includes(userId);
 }
 
-
+process.on("unhandledRejection", err => {
+  console.error("Unhandled rejection:", err);
+});
 
 // =======================
 // SLASH COMMANDS
 // =======================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  await interaction.deferReply();
 
-  const member =
-    interaction.options.getMember("user") ??
-    interaction.member ??
-    (await interaction.guild.members.fetch(interaction.user.id));
-  
-  const userId = member.id;
-  const displayName = resolveDisplayName(interaction, member);
+  if (!interaction.inGuild()) {
+    return interaction.reply({
+      content: "❌ This command can only be used in a server.",
+      ephemeral: true,
+    });
+  }
+
+  await interaction.deferReply();
   
     
+    
+    // -------- TOTAL HOURS (ALL USERS) --------
     // -------- TOTAL HOURS (ALL USERS) --------
     if (interaction.commandName === "totalhr") {
       await loadFromDisk();
-    
+
       let lines = [];
     
-      for (const [username, user] of Object.entries(timesheet)) {
+      for (const user of Object.values(timesheet)) {
         if (!user?.logs?.length) continue;
     
         let total = 0;
@@ -297,7 +524,7 @@ client.on("interactionCreate", async interaction => {
         total = Math.round(total * 100) / 100;
         if (total <= 0) continue;
     
-        lines.push(`**${username}** — ${total.toFixed(2)}h`);
+        lines.push(`**${user.name}** — ${total.toFixed(2)}h`);
       }
     
       if (!lines.length) {
@@ -316,22 +543,23 @@ client.on("interactionCreate", async interaction => {
     }
 
 
+
   // -------- CLOCK IN --------
-  // -------- CLOCK IN (EMBED) --------
   if (interaction.commandName === "clockin") {
-    const username = getUsername(interaction);
+    await loadFromDisk();
   
-    if (!timesheet[username]) {
-      timesheet[username] = { logs: [] };
+    const user = resolveStrictUser(interaction);
+    if (!user) {
+      return interaction.editReply("❌ Cannot resolve user.");
     }
   
-    if (timesheet[username].active) {
+    const record = ensureUserRecord(user.userId, user.name);
+  
+    if (record.active) {
       return interaction.editReply("❌ Already clocked in.");
     }
   
-    const start = nowISO();
-    timesheet[username].active = start;
-  
+    record.active = nowISO();
     await persist();
   
     return interaction.editReply({
@@ -339,105 +567,99 @@ client.on("interactionCreate", async interaction => {
         title: "🟢 Clocked In",
         color: 0x2ecc71,
         fields: [
-          { name: "👤 User", value: username },
-          { name: "⏱ Start Time", value: formatDate(start) },
+          { name: "👤 User", value: record.name },
+          { name: "🆔 User ID", value: record.userId },
+          { name: "⏱ Start", value: formatDate(record.active) },
         ],
-        timestamp: new Date(start).toISOString(),
+        timestamp: new Date().toISOString(),
       }],
     });
   }
+
 
 
   // -------- CLOCK OUT --------
   // -------- CLOCK OUT (EMBED + DETAILS) --------
   if (interaction.commandName === "clockout") {
     await loadFromDisk();
+
+    const user = resolveStrictUser(interaction);
+    if (!user) {
+      return interaction.editReply("❌ Cannot resolve user.");
+    }
   
-    const username =
-      interaction.member?.displayName ||
-      interaction.user?.globalName ||
-      interaction.user?.username;
+    const record = ensureUserRecord(user.userId, user.name);
   
-    const userData = timesheet[username];
-  
-    if (!userData?.active) {
+    if (!record.active) {
       return interaction.editReply("❌ Not clocked in.");
     }
   
-    const start = userData.active;
-    const end = new Date().toISOString();
-    const hours = (new Date(end) - new Date(start)) / 3600000;
+    const start = record.active;
+    const end = nowISO();
+    const hours = diffHours(start, end);
     const rounded = Math.round(hours * 100) / 100;
-  
-    // Push to logs
-    userData.logs.push({
+
+    record.logs.push({
       start,
       end,
       hours,
     });
   
-    // Remove active session
-    delete userData.active;
-  
-    // Save username
-    userData.name = username;
-  
+    record.active = null;
     await persist();
   
-    const voiceChannel =
-      interaction.member?.voice?.channel?.name || "Not in voice";
-  
-    // Build the embed
-    const embed = {
-      title: "🔴 Clocked Out",
-      color: 0xe74c3c,
-      fields: [
-        { name: "👤 User", value: username, inline: true },
-        { name: "📍 Voice Channel", value: voiceChannel, inline: true },
-        { name: "▶️ Started", value: formatDate(start), inline: false },
-        { name: "⏹ Ended", value: formatDate(end), inline: false },
-        { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
-        {
-          name: "⚠️ Reminder",
-          value: "**REMINDER: UPDATE AD SPENT**",
-          inline: false,
-        },
-      ],
-      footer: { text: "Time Tracker" },
-      timestamp: new Date().toISOString(),
-    };
-  
-    return interaction.editReply({ embeds: [embed] });
+    return interaction.editReply({
+      embeds: [{
+        title: "🔴 Clocked Out",
+        color: 0xe74c3c,
+        fields: [
+          { name: "👤 User", value: record.name },
+          { name: "▶️ Started", value: formatDate(start), inline: false },
+          { name: "⏹ Ended", value: formatDate(end), inline: false },
+          { name: "⏱ Session Duration", value: `${rounded}h`, inline: true },
+          {
+            name: "⚠️ Reminder",
+            value: "**REMINDER: UPDATE AD SPENT**",
+            inline: false,
+          },
+        ],
+        timestamp: new Date().toISOString(),
+      }],
+    });
   }
 
-  
+
 
   // -------- STATUS (EMBED + LIVE UPDATE) --------
-  // -------- STATUS (USERNAME ONLY, SAFE) --------
+  // -------- STATUS (SAFE, ID-ONLY, NO CRASHES) --------
   if (interaction.commandName === "status") {
     await loadFromDisk();
-    if (timesheet.undefined) {
-      delete timesheet.undefined;
-      await persist();
-    }
 
   
-    const username = getUsername(interaction);
-    if (!username) {
-      return interaction.editReply("❌ Cannot resolve username.");
-    }
-  
-    const userData = timesheet[username];
+    const uid = interaction.user.id;
+    const record = timesheet[uid];
   
     // ===== CLOCKED IN =====
-    if (userData?.active) {
-      const start = userData.active;
+    if (record?.active) {
+      const start = record.active;
   
-      const embed = {
+      const embedBase = {
         title: "🟢 Status: Clocked In",
         color: 0x2ecc71,
+        footer: { text: "Live updating every 5 seconds" },
+      };
+  
+      const buildEmbed = () => ({
+        ...embedBase,
         fields: [
-          { name: "👤 User", value: username, inline: true },
+          { 
+            name: "👤 User",
+            value:
+              interaction.member?.displayName ||
+              interaction.user.globalName ||
+              interaction.user.username,
+            inline: true,
+          },
           {
             name: "📍 Voice Channel",
             value:
@@ -456,59 +678,53 @@ client.on("interactionCreate", async interaction => {
             inline: true,
           },
         ],
-        footer: { text: "Live updating every 5 seconds" },
         timestamp: new Date().toISOString(),
-      };
+      });
   
-      // clear old timer
-      const existing = liveStatusTimers.get(username);
+      // clear existing timer
+      const existing = liveStatusTimers.get(uid);
       if (existing) {
         clearInterval(existing);
-        liveStatusTimers.delete(username);
+        liveStatusTimers.delete(uid);
       }
   
-      await interaction.editReply({ embeds: [embed] });
-  
-      // live update
+      await safeEdit(interaction, { embeds: [buildEmbed()] });
+
       const timer = setInterval(async () => {
-        if (!timesheet[username]?.active) {
+        // Stop if user no longer active
+        if (!timesheet[uid]?.active) {
           clearInterval(timer);
-          liveStatusTimers.delete(username);
+          liveStatusTimers.delete(uid);
           return;
         }
-  
-        try {
-          await interaction.editReply({
-            embeds: [{
-              ...embed,
-              fields: embed.fields.map(f =>
-                f.name === "⏱ Elapsed"
-                  ? { ...f, value: formatElapsedLive(start) }
-                  : f
-              ),
-              timestamp: new Date().toISOString(),
-            }],
-          });
-        } catch {
-          clearInterval(timer);
-          liveStatusTimers.delete(username);
-        }
+      
+        const embed = buildEmbed(); // your existing buildEmbed function
+      
+        await safeEdit(interaction, { embeds: [embed] });
       }, 5000);
+
   
-      liveStatusTimers.set(username, timer);
+      liveStatusTimers.set(uid, timer);
       return;
     }
   
     // ===== CLOCKED OUT =====
     const total =
-      userData?.logs?.reduce((t, l) => t + l.hours, 0) || 0;
+      record?.logs?.reduce((t, l) => t + l.hours, 0) || 0;
   
     return interaction.editReply({
       embeds: [{
         title: "⚪ Status: Clocked Out",
         color: 0x95a5a6,
         fields: [
-          { name: "👤 User", value: username, inline: true },
+          {
+            name: "👤 User",
+            value:
+              interaction.member?.displayName ||
+              interaction.user.globalName ||
+              interaction.user.username,
+            inline: true,
+          },
           {
             name: "⏱ Total Recorded Time",
             value: `${Math.round(total * 100) / 100}h`,
@@ -520,169 +736,106 @@ client.on("interactionCreate", async interaction => {
       }],
     });
   }
-  
 
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
     const sub = interaction.options.getSubcommand(false);
   
-    // ===== RESET (MANAGER ONLY) =====
-    // ===== RESET (MANAGER ONLY, USERNAME-ONLY) =====
-    if (sub === "reset") {
-      let member = interaction.member;
-      if (!member) {
-        try {
-          member = await interaction.guild.members.fetch(interaction.user.id);
-        } catch {
-          member = null;
-        }
-      }
-      
-      const username =
-        interaction.member?.displayName ||
-        interaction.user?.globalName ||
-        interaction.user?.username;
-      
-      if (!hasManagerRole(username)) {
-        return interaction.editReply("❌ Managers only.");
-      }
-
-    
-      await loadFromDisk();
-      if (timesheet?.undefined) {
-        delete timesheet.undefined;
-        await persist();
-      }
-      process.on("unhandledRejection", err => {
-        console.error("Unhandled rejection:", err);
-      });
-      // sanitize corrupted keys
-      if (timesheet.undefined) {
-        delete timesheet.undefined;
-      }
-    
-      let history = {};
-      try {
-        history = JSON.parse(
-          await fs.readFile("./timesheetHistory.json", "utf8")
-        );
-      } catch {}
-    
-      const stamp = new Date().toISOString();
-    
-      // DEEP COPY (important)
-      history[stamp] = JSON.parse(JSON.stringify(timesheet));
-    
-      await fs.writeFile(
-        "./timesheetHistory.json",
-        JSON.stringify(history, null, 2)
-      );
-    
-      // clear live timers
-      for (const timer of liveStatusTimers.values()) {
-        clearInterval(timer);
-      }
-      liveStatusTimers.clear();
-    
-      // reset timesheet
-      timesheet = {};
-      await persist();
-    
-      return interaction.editReply("✅ Timesheet reset & archived.");
-    }
-
+    if (sub !== "view") return;
   
-    // ===== VIEW =====
-    // ===== TIMESHEET VIEW (USERNAME ONLY) =====
     await loadFromDisk();
+  
+    // options (all optional)
+    const requestedUser = interaction.options.getUser("user");
+    const targetUser = requestedUser || interaction.user;
     
-    const username =
-      interaction.member?.displayName ||
-      interaction.user?.globalName ||
-      interaction.user?.username;
-    
-    if (timesheet.undefined) {
-      delete timesheet.undefined;
-      await persist();
+    // permission check
+    if (
+      requestedUser &&
+      requestedUser.id !== interaction.user.id &&
+      !hasManagerRoleById(interaction.user.id)
+    ) {
+      return interaction.editReply("❌ You don’t have permission to view other users’ timesheets.");
     }
 
-    if (!username) {
-      return interaction.editReply("❌ Cannot resolve username.");
-    }
-    
-    const userData = timesheet[username];
-    
-    if (!userData || !Array.isArray(userData.logs) || userData.logs.length === 0) {
-      return interaction.editReply("📭 No records found.");
-    }
-    
     const startStr = interaction.options.getString("start");
     const endStr   = interaction.options.getString("end");
-    
+  
+    // parse dates
     const start = parseDate(startStr);
     const end   = parseDate(endStr, true);
-    
+    const member = await safeGetMember(interaction, targetUser.id);
+  
+    const displayName =
+      member?.displayName ||
+      targetUser.globalName ||
+      targetUser.username;
+  
+    // fetch record
+    const record = timesheet[targetUser.id];
+  
+    if (!record || !Array.isArray(record.logs) || record.logs.length === 0) {
+      return interaction.editReply("📭 No records found.");
+    }
+  
+    // filter logs by date range
     let total = 0;
     let lines = [];
     let count = 0;
-    
-    for (const l of userData.logs) {
-      const s = new Date(l.start);
-      if ((start && s < start) || (end && s > end)) continue;
-    
-      const hours =
-        (new Date(l.end) - new Date(l.start)) / 3600000;
-    
+  
+    for (const l of record.logs) {
+      const sessionStart = new Date(l.start);
+  
+      if ((start && sessionStart < start) || (end && sessionStart > end)) continue;
+  
+      const hours = (new Date(l.end) - new Date(l.start)) / 3600000;
       total += hours;
       count++;
-    
+  
       lines.push(
         `**${count}.** ${formatSession(l.start, l.end)} — **${Math.round(hours * 100) / 100}h**`
       );
     }
-    
+  
     if (!count) {
-      return interaction.editReply("📭 No sessions in range.");
+      return interaction.editReply("📭 No sessions in the selected range.");
     }
-    
+  
+    // range label
     const rangeLabel =
       startStr || endStr
         ? `${startStr || "Beginning"} → ${endStr || "Now"}`
         : "All time";
-    
+  
+    // response
     return interaction.editReply({
       embeds: [{
         title: "🧾 Timesheet",
         color: 0x3498db,
         fields: [
-          { name: "👤 User", value: username, inline: true },
+          { name: "👤 User", value: displayName, inline: true },
+          { name: "🆔 User ID", value: targetUser.id, inline: true },
           { name: "📅 Range", value: rangeLabel, inline: true },
           { name: "🧮 Sessions", value: String(count), inline: true },
-          {
-            name: "⏱ Total Hours",
-            value: `${Math.round(total * 100) / 100}h`,
-            inline: true,
-          },
-          {
-            name: "📋 Logs",
-            value: lines.join("\n"),
-            inline: false,
-          },
+          { name: "⏱ Total Hours", value: `${Math.round(total * 100) / 100}h`, inline: true },
+          { name: "📋 Logs", value: lines.join("\n"), inline: false },
         ],
         footer: { text: "Time Tracker" },
         timestamp: new Date().toISOString(),
       }],
     });
-
   }
 });  
+
 // =======================
 // STARTUP
 // =======================
 (async () => {
-  startKeepAlive();
   await loadFromGitHub();
+  await persist(); // persist already merges safely
+
+  startKeepAlive();
   await client.login(process.env.DISCORD_TOKEN);
   console.log(`✅ Logged in as ${client.user.tag}`);
 })();
