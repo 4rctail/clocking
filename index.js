@@ -632,6 +632,38 @@ client.on("interactionCreate", async interaction => {
     }
 
 
+    // -------- CLOCK IN --------
+    // -------- CLOCK IN --------
+    if (interaction.commandName === "clockin") {
+      await loadFromDisk();
+    
+      const user = resolveStrictUser(interaction);
+      if (!user) {
+        return interaction.editReply("❌ Cannot resolve user.");
+      }
+    
+      const record = ensureUserRecord(user.userId, user.name);
+    
+      if (record.active) {
+        return interaction.editReply("❌ Already clocked in.");
+      }
+    
+      record.active = nowISO();
+      await persist();
+    
+      return interaction.editReply({
+        embeds: [{
+          title: "🟢 Clocked In",
+          color: 0x2ecc71,
+          fields: [
+            { name: "👤 User", value: record.name },
+            { name: "🆔 User ID", value: record.userId },
+            { name: "⏱ Start", value: formatDate(record.active) },
+          ],
+          timestamp: new Date().toISOString(),
+        }],
+      });
+    }
 
   // -------- CLOCK OUT --------
   // -------- CLOCK OUT (EMBED + DETAILS) --------
@@ -800,13 +832,6 @@ client.on("interactionCreate", async interaction => {
               interaction.member?.displayName ||
               interaction.user.globalName ||
               interaction.user.username,
-            inline: true,
-          },
-          {
-            name: "📍 Voice Channel",
-            value:
-              interaction.member?.voice?.channel?.name ||
-              "Not in voice",
             inline: true,
           },
           {
