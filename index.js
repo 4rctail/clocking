@@ -820,13 +820,6 @@ client.on("interactionCreate", async interaction => {
             inline: true,
           },
           {
-            name: "📍 Voice Channel",
-            value:
-              interaction.member?.voice?.channel?.name ||
-              "Not in voice",
-            inline: true,
-          },
-          {
             name: "▶️ Started",
             value: formatDate(start),
             inline: false,
