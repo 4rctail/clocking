@@ -109,6 +109,13 @@ function autoMergeOldUsers() {
   }
 }
 
+function formatElapsedLive(startISO) {
+  const ms = Date.now() - new Date(startISO).getTime();
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${h}h ${m}m ${s}s`;
+}
 
 
 function formatSession(startISO, endISO) {
@@ -249,14 +256,76 @@ function appendLogs(userId, newLogs) {
     }
   }
 }
+/**
+ * Parse HH:MM string into a Date in PH timezone on a given date.
+ * If dateStr is provided (MM/DD/YYYY), use that day; otherwise today.
+ */
+function parsePHTime(timeStr, dateStr) {
+  if (!timeStr) return null;
+
+  let dateObj = new Date();
+  if (dateStr) {
+    const [m, d, y] = dateStr.split("/").map(Number);
+    if (!m || !d || !y) return null;
+    dateObj = new Date(y, m - 1, d);
+  }
+
+  const [h, min] = timeStr.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(min)) return null;
+
+  // PH = UTC+8 → adjust UTC so stored date is correct
+  const utcDate = new Date(Date.UTC(
+    dateObj.getFullYear(),
+    dateObj.getMonth(),
+    dateObj.getDate(),
+    h - 8, // offset PH → UTC
+    min,
+    0,
+    0
+  ));
+
+  return utcDate;
+}
+/**
+ * Format a UTC ISO string for display in PH timezone
+ */
+function formatPH(isoStr) {
+  return new Date(isoStr).toLocaleString("en-PH", {
+    timeZone: PH_TZ,
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+/**
+ * Format session start/end
+ */
+function formatSessionPH(startISO, endISO) {
+  const s = new Date(startISO);
+  const e = new Date(endISO);
+
+  const dateOpts = { timeZone: PH_TZ, month: "long", day: "numeric", year: "numeric" };
+  const timeOpts = { timeZone: PH_TZ, hour: "numeric", minute: "2-digit" };
+
+  const sameDay = s.toLocaleDateString("en-PH", dateOpts) === e.toLocaleDateString("en-PH", dateOpts);
+  const datePart = sameDay
+    ? s.toLocaleDateString("en-PH", dateOpts)
+    : `${s.toLocaleDateString("en-PH", dateOpts)} – ${e.toLocaleDateString("en-PH", dateOpts)}`;
+
+  const timePart = `${s.toLocaleTimeString("en-PH", timeOpts)} - ${e.toLocaleTimeString("en-PH", timeOpts)}`;
+
+  return `${datePart}, ${timePart}`;
+}
 
 
-function parseDate(str, end = false) {
+function parseDatePH(str, end = false) {
   if (!str) return null;
 
-  // REMOVE commas, trim spaces
   str = str.replace(/,/g, "").trim();
-
   const parts = str.split("/");
   if (parts.length !== 3) return null;
 
@@ -264,24 +333,18 @@ function parseDate(str, end = false) {
   const d = Number(parts[1]);
   const y = Number(parts[2]);
 
-  if (
-    !Number.isInteger(m) ||
-    !Number.isInteger(d) ||
-    !Number.isInteger(y)
-  ) return null;
+  if (!Number.isInteger(m) || !Number.isInteger(d) || !Number.isInteger(y)) {
+    return null;
+  }
 
-  const date = new Date(y, m - 1, d);
-  if (end) date.setHours(23, 59, 59, 999);
-  return date;
+  // Create PH midnight explicitly, then convert to UTC
+  const phDate = new Date(
+    Date.UTC(y, m - 1, d, end ? 15 : -8, end ? 59 : 0, end ? 59 : 0, end ? 999 : 0)
+  );
+
+  return phDate;
 }
 
-function formatElapsedLive(startISO) {
-  const diff = Date.now() - new Date(startISO).getTime();
-  const h = Math.floor(diff / 3600000);
-  const m = Math.floor((diff % 3600000) / 60000);
-  const s = Math.floor((diff % 60000) / 1000);
-  return `${h}h ${m}m ${s}s`;
-}
 
 // Track live status updates per user
 const liveStatusTimers = new Map();
@@ -501,6 +564,15 @@ client.on("interactionCreate", async interaction => {
       ephemeral: true,
     });
   }
+  if (
+    interaction.commandName === "forceclockout" &&
+    !interaction.options.data.length
+  ) {
+    return interaction.reply({
+      content: "❌ Command schema out of sync. Please redeploy commands.",
+      ephemeral: true,
+    });
+  }
 
   await interaction.deferReply();
   
@@ -629,6 +701,93 @@ client.on("interactionCreate", async interaction => {
   }
 
 
+  // -------- EDIT SESSION (MANAGER ONLY) --------
+  if (interaction.commandName === "edit") {
+    try {
+      await loadFromDisk();
+  
+      // Permission check
+      if (!hasManagerRoleById(interaction.user.id)) {
+        return interaction.editReply("❌ Only managers can edit sessions.");
+      }
+  
+      const targetUser = interaction.options.getUser("user");
+      if (!targetUser) {
+        return interaction.editReply("❌ You must specify a user.");
+      }
+  
+      const sessionIndex = interaction.options.getInteger("session");
+      if (!sessionIndex || sessionIndex < 1) {
+        return interaction.editReply("❌ You must specify a valid session number (starting from 1).");
+      }
+  
+      const startStr = interaction.options.getString("started");
+      const endStr   = interaction.options.getString("ended");
+      if (!startStr || !endStr) {
+        return interaction.editReply("❌ You must provide both start and end times.");
+      }
+  
+      const record = timesheet[targetUser.id];
+      if (!record || !Array.isArray(record.logs) || record.logs.length === 0) {
+        return interaction.editReply("⚠️ This user has no sessions to edit.");
+      }
+  
+      const index = sessionIndex - 1;
+      if (index >= record.logs.length) {
+        return interaction.editReply(`⚠️ User only has ${record.logs.length} session(s).`);
+      }
+  
+      // Parse PH date for today with given time
+      const today = new Date().toLocaleDateString("en-PH", { timeZone: PH_TZ });
+      const parseTime = (str) => {
+        const [h, m] = str.split(":").map(Number);
+        if (Number.isNaN(h) || Number.isNaN(m)) return null;
+        const [month, day, year] = today.split("/").map(Number);
+        return new Date(year, month - 1, day, h, m);
+      };
+  
+      const newStart = parsePHTime(startStr);
+      const newEnd = parsePHTime(endStr);
+  
+      if (!newStart || !newEnd || newStart >= newEnd) {
+        return interaction.editReply("❌ Invalid times. Ensure start < end and format is HH:MM.");
+      }
+  
+      const hours = (newEnd - newStart) / 3600000;
+      record.logs[index] = {
+        start: newStart.toISOString(),
+        end: newEnd.toISOString(),
+        hours: Math.round(hours * 100) / 100,
+      };
+  
+      await persist();
+  
+      const member = await safeGetMember(interaction, targetUser.id);
+      const displayName =
+        member?.displayName || targetUser.globalName || targetUser.username;
+  
+      return interaction.editReply({
+        embeds: [{
+          title: "✏️ Session Edited",
+          color: 0xf1c40f,
+          fields: [
+            { name: "👤 User", value: displayName, inline: true },
+            { name: "🆔 User ID", value: targetUser.id, inline: true },
+            { name: "📝 Session", value: `#${sessionIndex}`, inline: true },
+            { name: "▶️ New Start", value: formatDate(newStart.toISOString()), inline: true },
+            { name: "⏹ New End", value: formatDate(newEnd.toISOString()), inline: true },
+            { name: "⏱ Duration", value: `${Math.round(hours * 100) / 100}h`, inline: true },
+            { name: "👮 Edited by", value: interaction.member?.displayName || interaction.user.username, inline: true },
+          ],
+          timestamp: new Date().toISOString(),
+        }],
+      });
+  
+    } catch (err) {
+      console.error("Edit command failed:", err);
+      return safeEdit(interaction, "❌ Failed to edit session due to an internal error.");
+    }
+  }
 
   // -------- STATUS (EMBED + LIVE UPDATE) --------
   // -------- STATUS (SAFE, ID-ONLY, NO CRASHES) --------
@@ -737,6 +896,77 @@ client.on("interactionCreate", async interaction => {
     });
   }
 
+    // -------- FORCE CLOCK OUT (MANAGER ONLY | CRASH SAFE) --------
+    if (interaction.commandName === "forceclockout") {
+      try {
+        await loadFromDisk();
+    
+        // permission check
+        if (!hasManagerRoleById(interaction.user.id)) {
+          return interaction.editReply("❌ You are not allowed to force clock-out users.");
+        }
+    
+        const targetUser = interaction.options.getUser("user");
+    
+        // 🚨 HARD GUARD (THIS FIXES THE HANG)
+        if (!targetUser) {
+          return interaction.editReply("❌ No user provided. Please re-run the command.");
+        }
+    
+        const record = timesheet[targetUser.id];
+    
+        if (!record || !record.active) {
+          return interaction.editReply("⚠️ That user is not currently clocked in.");
+        }
+    
+        const start = record.active;
+        const end = nowISO();
+        const hours = diffHours(start, end);
+        const rounded = Math.round(hours * 100) / 100;
+    
+        record.logs.push({ start, end, hours });
+        record.active = null;
+    
+        await persist();
+    
+        const member = await safeGetMember(interaction, targetUser.id);
+    
+        const displayName =
+          member?.displayName ||
+          targetUser.globalName ||
+          targetUser.username;
+    
+        return interaction.editReply({
+          embeds: [{
+            title: "⛔ Force Clock-Out",
+            color: 0xe67e22,
+            fields: [
+              { name: "👤 User", value: displayName, inline: true },
+              { name: "🆔 User ID", value: targetUser.id, inline: true },
+              { name: "▶️ Started", value: formatDate(start) },
+              { name: "⏹ Ended", value: formatDate(end) },
+              { name: "⏱ Duration", value: `${rounded}h`, inline: true },
+              {
+                name: "👮 Forced by",
+                value:
+                  interaction.member?.displayName ||
+                  interaction.user.globalName ||
+                  interaction.user.username,
+                inline: true,
+              },
+            ],
+            timestamp: new Date().toISOString(),
+          }],
+        });
+    
+      } catch (err) {
+        console.error("ForceClockOut failed:", err);
+    
+        // ensure Discord always gets a response
+        return safeEdit(interaction, "❌ Force clock-out failed due to an internal error.");
+      }
+    }
+
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
@@ -763,8 +993,9 @@ client.on("interactionCreate", async interaction => {
     const endStr   = interaction.options.getString("end");
   
     // parse dates
-    const start = parseDate(startStr);
-    const end   = parseDate(endStr, true);
+    const start = parseDatePH(startStr);
+    const end   = parseDatePH(endStr, true);
+
     const member = await safeGetMember(interaction, targetUser.id);
   
     const displayName =
