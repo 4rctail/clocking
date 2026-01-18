@@ -804,16 +804,63 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // -------- STATUS (EMBED + LIVE UPDATE) --------
-  // -------- STATUS (SAFE, ID-ONLY, NO CRASHES) --------
+  // -------- STATUS --------
   if (interaction.commandName === "status") {
     await loadFromDisk();
+  
+    const showAll = interaction.options.getBoolean("all");
+    const targetUser =
+      interaction.options.getUser("user") || interaction.user;
+  
+    const uid = targetUser.id;
+  
+    // ======================
+    // /status all  (COMPACT EMBED)
+    // ======================
+    if (showAll) {
+      const activeUsers = Object.values(timesheet).filter(u => u?.active);
+  
+      if (!activeUsers.length) {
+        return interaction.editReply("⚪ No users are currently clocked in.");
+      }
+  
+      const lines = [];
+  
+      for (const u of activeUsers) {
+        const member = await safeGetMember(interaction, u.userId);
+  
+        const displayName = member
+          ? `${member.displayName} (${member.user.username})`
+          : u.name;
 
+        lines.push(
+          `❇️ **${displayName}** — \`${formatDate(u.active)}\``
+        );
+      }
   
-    const uid = interaction.user.id;
+      return interaction.editReply({
+        embeds: [{
+          title: "🟢 Active Users",
+          color: 0x2ecc71,
+          description: lines.join("\n"),
+          footer: { text: `Active: ${activeUsers.length}` },
+          timestamp: new Date().toISOString(),
+        }],
+      });
+    }
+  
+    // ======================
+    // /status (SELF or USER)
+    // ======================
     const record = timesheet[uid];
+    const member = await safeGetMember(interaction, uid);
   
-    // ===== CLOCKED IN =====
+    const displayName =
+      member?.displayName ||
+      targetUser.globalName ||
+      targetUser.username;
+  
+    // ===== CLOCKED IN (LIVE UPDATE) =====
     if (record?.active) {
       const start = record.active;
   
@@ -826,24 +873,9 @@ client.on("interactionCreate", async interaction => {
       const buildEmbed = () => ({
         ...embedBase,
         fields: [
-          { 
-            name: "👤 User",
-            value:
-              interaction.member?.displayName ||
-              interaction.user.globalName ||
-              interaction.user.username,
-            inline: true,
-          },
-          {
-            name: "▶️ Started",
-            value: formatDate(start),
-            inline: false,
-          },
-          {
-            name: "⏱ Elapsed",
-            value: formatElapsedLive(start),
-            inline: true,
-          },
+          { name: "👤 User", value: displayName, inline: true },
+          { name: "▶️ Started", value: formatDate(start), inline: false },
+          { name: "⏱ Elapsed", value: formatElapsedLive(start), inline: true },
         ],
         timestamp: new Date().toISOString(),
       });
@@ -856,20 +888,15 @@ client.on("interactionCreate", async interaction => {
       }
   
       await safeEdit(interaction, { embeds: [buildEmbed()] });
-
+  
       const timer = setInterval(async () => {
-        // Stop if user no longer active
         if (!timesheet[uid]?.active) {
           clearInterval(timer);
           liveStatusTimers.delete(uid);
           return;
         }
-      
-        const embed = buildEmbed(); // your existing buildEmbed function
-      
-        await safeEdit(interaction, { embeds: [embed] });
+        await safeEdit(interaction, { embeds: [buildEmbed()] });
       }, 5000);
-
   
       liveStatusTimers.set(uid, timer);
       return;
@@ -884,14 +911,7 @@ client.on("interactionCreate", async interaction => {
         title: "⚪ Status: Clocked Out",
         color: 0x95a5a6,
         fields: [
-          {
-            name: "👤 User",
-            value:
-              interaction.member?.displayName ||
-              interaction.user.globalName ||
-              interaction.user.username,
-            inline: true,
-          },
+          { name: "👤 User", value: displayName, inline: true },
           {
             name: "⏱ Total Recorded Time",
             value: `${Math.round(total * 100) / 100}h`,
