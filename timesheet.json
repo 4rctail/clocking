@@ -1235,7 +1235,13 @@
     "lastKnownNames": [
       "Errielle Diongco"
     ],
-    "logs": [],
-    "active": "2026-01-18T15:10:18.475Z"
+    "logs": [
+      {
+        "start": "2026-01-18T15:10:18.475Z",
+        "end": "2026-01-18T19:12:45.218Z",
+        "hours": 4.040761944444444
+      }
+    ],
+    "active": null
   }
 }
