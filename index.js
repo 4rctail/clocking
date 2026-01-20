@@ -611,9 +611,9 @@ client.on("interactionCreate", async interaction => {
       await loadFromDisk();
     
       // 🔒 MANAGER ONLY
-      if (!hasManagerRoleById(interaction.user.id)) {
+      if (!hasLeaderRoleById(interaction.user.id)) {
         return interaction.editReply({
-          content: "❌ Only managers can view total hours.",
+          content: "❌ Only managers & leaders can view total hours.",
           ephemeral: true,
         });
       }
@@ -1117,7 +1117,7 @@ client.on("interactionCreate", async interaction => {
     if (
       requestedUser &&
       requestedUser.id !== interaction.user.id &&
-      !hasManagerRoleById(interaction.user.id)
+      !hasLeaderRoleById(interaction.user.id)
     ) {
       return interaction.editReply("❌ You don’t have permission to view other users’ timesheets.");
     }
