@@ -1158,14 +1158,17 @@ client.on("interactionCreate", async interaction => {
   // -------- LOG TRACKER (MANAGER ONLY) --------
   if (interaction.commandName === "logtracker") {
     await loadFromDisk();
-    const sub = interaction.options.getSubcommand();
+  
+    const sub = interaction.options.getSubcommand(); // should always be 'run'
     if (!hasManagerRoleById(interaction.user.id)) {
       return interaction.editReply("❌ Only managers can run log tracker.");
     }
-    
-    if (sub === "view") {
-      const trackId = interaction.options.getInteger("id");
-    
+  
+    const reset = interaction.options.getBoolean("reset");
+    const trackId = interaction.options.getInteger("id");
+  
+    // ===== VIEW ARCHIVED LOG =====
+    if (trackId) {
       let history;
       try {
         history = await readFileFromGitHub("timesheetHistory.json");
@@ -1173,32 +1176,32 @@ client.on("interactionCreate", async interaction => {
         console.error(err);
         return interaction.editReply("❌ Failed to read log history from GitHub.");
       }
-    
+  
       const track = history.tracks?.find(t => t.trackId === trackId);
       if (!track) {
         return interaction.editReply(`❌ No log found for ID **${trackId}**.`);
       }
-    
+  
       const lines = [];
       let grandTotal = 0;
-    
+  
       for (const user of Object.values(track.data)) {
         let total = 0;
         for (const log of user.logs || []) {
           if (typeof log.hours === "number") total += log.hours;
         }
-    
+  
         total = Math.round(total * 100) / 100;
         if (total <= 0) continue;
-    
+  
         grandTotal += total;
         lines.push(`**${user.name}** — ${total.toFixed(2)}h`);
       }
-    
+  
       lines.push("");
       lines.push(`**🧮 GRAND TOTAL:** **${grandTotal.toFixed(2)}h**`);
-    
-      return interaction.editReply({   // ✅ THIS return is critical
+  
+      return interaction.editReply({
         embeds: [{
           title: "📦 LogTracker View",
           color: 0x3498db,
@@ -1207,8 +1210,7 @@ client.on("interactionCreate", async interaction => {
             { name: "🆔 Track ID", value: String(track.trackId), inline: true },
             {
               name: "🕒 Time Range",
-              value:
-                `${formatDate(track.timeRange.oldest)}\n→ ${formatDate(track.timeRange.latest)}`,
+              value: `${formatDate(track.timeRange.oldest)}\n→ ${formatDate(track.timeRange.latest)}`,
               inline: false,
             },
           ],
@@ -1217,98 +1219,108 @@ client.on("interactionCreate", async interaction => {
         }],
       });
     }
-
-
-    const HISTORY_FILE = "./timesheetHistory.json";
   
-    // Load history
-    let history = { tracks: [] };
-    try {
-      history = JSON.parse(await fs.readFile(HISTORY_FILE, "utf8"));
-      if (!Array.isArray(history.tracks)) history.tracks = [];
-    } catch {
-      history = { tracks: [] };
-    }
+    // ===== ARCHIVE LOGS =====
+    else if (reset) {
+      const HISTORY_FILE = "./timesheetHistory.json";
+      let history = { tracks: [] };
   
-    const movedData = {};
-    let oldest = null;
-    let latest = null;
-  
-    for (const [key, user] of Object.entries(timesheet)) {
-      if (!Array.isArray(user.logs) || user.logs.length === 0) continue;
-  
-      // Track date range
-      for (const log of user.logs) {
-        const s = new Date(log.start);
-        const e = new Date(log.end);
-  
-        if (!oldest || s < oldest) oldest = s;
-        if (!latest || e > latest) latest = e;
+      try {
+        history = JSON.parse(await fs.readFile(HISTORY_FILE, "utf8"));
+        if (!Array.isArray(history.tracks)) history.tracks = [];
+      } catch {
+        history = { tracks: [] };
       }
   
-      // Copy user
-      movedData[key] = {
-        ...user,
-        logs: [...user.logs],
-      };
+      const movedData = {};
+      let oldest = null;
+      let latest = null;
   
-      // Clear logs but keep active if present
-      user.logs = [];
+      for (const [key, user] of Object.entries(timesheet)) {
+        if (!Array.isArray(user.logs) || user.logs.length === 0) continue;
+  
+        for (const log of user.logs) {
+          const s = new Date(log.start);
+          const e = new Date(log.end);
+  
+          if (!oldest || s < oldest) oldest = s;
+          if (!latest || e > latest) latest = e;
+        }
+  
+        movedData[key] = { ...user, logs: [...user.logs] };
+        user.logs = []; // clear active logs
+      }
+  
+      if (!Object.keys(movedData).length) {
+        return interaction.editReply("📭 No logs to archive.");
+      }
+  
+      const newTrackId = history.tracks.length + 1;
+  
+      history.tracks.push({
+        trackId: newTrackId,
+        createdAt: new Date().toISOString(),
+        timeRange: {
+          oldest: oldest.toISOString(),
+          latest: latest.toISOString(),
+        },
+        data: movedData,
+      });
+  
+      const historyJson = JSON.stringify(history, null, 2);
+      await fs.writeFile(HISTORY_FILE, historyJson);
+  
+      await commitFileToGitHub({
+        path: "timesheetHistory.json",
+        content: historyJson,
+        message: `LogTracker #${newTrackId} (${formatDate(oldest.toISOString())} → ${formatDate(latest.toISOString())})`,
+      });
+  
+      await persist();
+  
+      return interaction.editReply({
+        embeds: [{
+          title: "📦 Log Tracker Completed",
+          color: 0x3498db,
+          fields: [
+            { name: "🆔 Track ID", value: `${newTrackId}`, inline: true },
+            {
+              name: "🕒 Time Range",
+              value: `${formatDate(oldest.toISOString())}\n→ ${formatDate(latest.toISOString())}`,
+              inline: false,
+            },
+            {
+              name: "👮 Executed by",
+              value: interaction.member?.displayName || interaction.user.username,
+              inline: true,
+            },
+          ],
+          footer: { text: "Archived logs, active sessions preserved" },
+          timestamp: new Date().toISOString(),
+        }],
+      });
     }
   
-    if (!Object.keys(movedData).length) {
-      return interaction.editReply("📭 No logs to archive.");
+    // ===== DEFAULT INSTRUCTIONS =====
+    else {
+      return interaction.editReply({
+        embeds: [{
+          title: "📦 LogTracker Instructions",
+          color: 0x3498db,
+          description:
+            "Use this command to archive logs or view past logtracks.\n\n" +
+            "`/logtracker run reset:true` → Archive current logs, clear active logs, push to GitHub.\n" +
+            "`/logtracker run id:<number>` → View a specific logtrack.\n" +
+            "`/logtracker run` → Show these instructions.",
+          footer: { text: "Manager only" },
+          timestamp: new Date().toISOString(),
+        }],
+      });
     }
-  
-    const trackId = history.tracks.length + 1;
-  
-    history.tracks.push({
-      trackId,
-      createdAt: new Date().toISOString(),
-      timeRange: {
-        oldest: oldest.toISOString(),
-        latest: latest.toISOString(),
-      },
-      data: movedData,
-    });
-  
-    const historyJson = JSON.stringify(history, null, 2);
-
-    // local write (still useful)
-    await fs.writeFile("./timesheetHistory.json", historyJson);
-    
-    // 🔥 COMMIT TO GITHUB
-    await commitFileToGitHub({
-      path: "timesheetHistory.json",
-      content: historyJson,
-      message: `LogTracker #${trackId} (${formatDate(oldest.toISOString())} → ${formatDate(latest.toISOString())})`,
-    });
-
-    await persist();
-  
-    return interaction.editReply({
-      embeds: [{
-        title: "📦 Log Tracker Completed",
-        color: 0x3498db,
-        fields: [
-          { name: "🆔 Track ID", value: `${trackId}`, inline: true },
-          {
-            name: "🕒 Time Range",
-            value:
-              `${formatDate(oldest.toISOString())}\n→ ${formatDate(latest.toISOString())}`,
-            inline: false,
-          },
-          {
-            name: "👮 Executed by",
-            value: interaction.member?.displayName || interaction.user.username,
-            inline: true,
-          },
-        ],
-        footer: { text: "Archived logs, active sessions preserved" },
-        timestamp: new Date().toISOString(),
-      }],
-    });
   }
+
+
+
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
