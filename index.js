@@ -182,6 +182,26 @@ async function safeEdit(interaction, payload) {
   }
 }
 
+async function readFileFromGitHub(path) {
+  const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/${path}`;
+
+  const res = await fetch(api, {
+    headers: {
+      Authorization: `token ${GIT_TOKEN}`,
+      Accept: "application/vnd.github+json",
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to read ${path} from GitHub`);
+  }
+
+  const data = await res.json();
+  const decoded = Buffer.from(data.content, "base64").toString("utf8");
+  return JSON.parse(decoded);
+}
+
+
 async function safeGetMember(interaction, userId) {
   if (!interaction.inGuild()) return null;
   if (!interaction.guild) return null;
@@ -192,6 +212,41 @@ async function safeGetMember(interaction, userId) {
   );
 }
 
+async function commitFileToGitHub({
+  path,
+  content,
+  message,
+}) {
+  const api = `https://api.github.com/repos/${GIT_USER}/${GIT_REPO}/contents/${path}`;
+  const headers = {
+    Authorization: `token ${GIT_TOKEN}`,
+    Accept: "application/vnd.github+json",
+  };
+
+  // Get existing file SHA (if exists)
+  let sha = null;
+  const existing = await fetch(api, { headers });
+  if (existing.ok) {
+    const data = await existing.json();
+    sha = data.sha;
+  }
+
+  const res = await fetch(api, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({
+      message,
+      content: Buffer.from(content).toString("base64"),
+      sha,
+      branch: process.env.GIT_BRANCH || "main",
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`GitHub commit failed: ${err}`);
+  }
+}
 
 // =======================
 // STRICT USER RESOLUTION (ID-FIRST)
@@ -611,9 +666,9 @@ client.on("interactionCreate", async interaction => {
       await loadFromDisk();
     
       // 🔒 MANAGER ONLY
-      if (!hasLeaderRoleById(interaction.user.id)) {
+      if (!hasManagerRoleById(interaction.user.id)) {
         return interaction.editReply({
-          content: "❌ Only managers & leaders can view total hours.",
+          content: "❌ Only managers can view total hours.",
           ephemeral: true,
         });
       }
@@ -1100,6 +1155,160 @@ client.on("interactionCreate", async interaction => {
       }
     }
 
+  // -------- LOG TRACKER (MANAGER ONLY) --------
+  if (interaction.commandName === "logtracker") {
+    await loadFromDisk();
+    const sub = interaction.options.getSubcommand();
+    if (!hasManagerRoleById(interaction.user.id)) {
+      return interaction.editReply("❌ Only managers can run log tracker.");
+    }
+    
+    if (sub === "view") {
+      const trackId = interaction.options.getInteger("id");
+    
+      let history;
+      try {
+        history = await readFileFromGitHub("timesheetHistory.json");
+      } catch (err) {
+        console.error(err);
+        return interaction.editReply("❌ Failed to read log history from GitHub.");
+      }
+    
+      const track = history.tracks?.find(t => t.trackId === trackId);
+      if (!track) {
+        return interaction.editReply(`❌ No log found for ID **${trackId}**.`);
+      }
+    
+      const lines = [];
+      let grandTotal = 0;
+    
+      for (const user of Object.values(track.data)) {
+        let total = 0;
+        for (const log of user.logs || []) {
+          if (typeof log.hours === "number") total += log.hours;
+        }
+    
+        total = Math.round(total * 100) / 100;
+        if (total <= 0) continue;
+    
+        grandTotal += total;
+        lines.push(`**${user.name}** — ${total.toFixed(2)}h`);
+      }
+    
+      lines.push("");
+      lines.push(`**🧮 GRAND TOTAL:** **${grandTotal.toFixed(2)}h**`);
+    
+      return interaction.editReply({   // ✅ THIS return is critical
+        embeds: [{
+          title: "📦 LogTracker View",
+          color: 0x3498db,
+          description: lines.join("\n"),
+          fields: [
+            { name: "🆔 Track ID", value: String(track.trackId), inline: true },
+            {
+              name: "🕒 Time Range",
+              value:
+                `${formatDate(track.timeRange.oldest)}\n→ ${formatDate(track.timeRange.latest)}`,
+              inline: false,
+            },
+          ],
+          footer: { text: "Source: GitHub • timesheetHistory.json" },
+          timestamp: new Date().toISOString(),
+        }],
+      });
+    }
+
+
+    const HISTORY_FILE = "./timesheetHistory.json";
+  
+    // Load history
+    let history = { tracks: [] };
+    try {
+      history = JSON.parse(await fs.readFile(HISTORY_FILE, "utf8"));
+      if (!Array.isArray(history.tracks)) history.tracks = [];
+    } catch {
+      history = { tracks: [] };
+    }
+  
+    const movedData = {};
+    let oldest = null;
+    let latest = null;
+  
+    for (const [key, user] of Object.entries(timesheet)) {
+      if (!Array.isArray(user.logs) || user.logs.length === 0) continue;
+  
+      // Track date range
+      for (const log of user.logs) {
+        const s = new Date(log.start);
+        const e = new Date(log.end);
+  
+        if (!oldest || s < oldest) oldest = s;
+        if (!latest || e > latest) latest = e;
+      }
+  
+      // Copy user
+      movedData[key] = {
+        ...user,
+        logs: [...user.logs],
+      };
+  
+      // Clear logs but keep active if present
+      user.logs = [];
+    }
+  
+    if (!Object.keys(movedData).length) {
+      return interaction.editReply("📭 No logs to archive.");
+    }
+  
+    const trackId = history.tracks.length + 1;
+  
+    history.tracks.push({
+      trackId,
+      createdAt: new Date().toISOString(),
+      timeRange: {
+        oldest: oldest.toISOString(),
+        latest: latest.toISOString(),
+      },
+      data: movedData,
+    });
+  
+    const historyJson = JSON.stringify(history, null, 2);
+
+    // local write (still useful)
+    await fs.writeFile("./timesheetHistory.json", historyJson);
+    
+    // 🔥 COMMIT TO GITHUB
+    await commitFileToGitHub({
+      path: "timesheetHistory.json",
+      content: historyJson,
+      message: `LogTracker #${trackId} (${formatDate(oldest.toISOString())} → ${formatDate(latest.toISOString())})`,
+    });
+
+    await persist();
+  
+    return interaction.editReply({
+      embeds: [{
+        title: "📦 Log Tracker Completed",
+        color: 0x3498db,
+        fields: [
+          { name: "🆔 Track ID", value: `${trackId}`, inline: true },
+          {
+            name: "🕒 Time Range",
+            value:
+              `${formatDate(oldest.toISOString())}\n→ ${formatDate(latest.toISOString())}`,
+            inline: false,
+          },
+          {
+            name: "👮 Executed by",
+            value: interaction.member?.displayName || interaction.user.username,
+            inline: true,
+          },
+        ],
+        footer: { text: "Archived logs, active sessions preserved" },
+        timestamp: new Date().toISOString(),
+      }],
+    });
+  }
 
   // -------- TIMESHEET --------
   if (interaction.commandName === "timesheet") {
@@ -1117,7 +1326,7 @@ client.on("interactionCreate", async interaction => {
     if (
       requestedUser &&
       requestedUser.id !== interaction.user.id &&
-      !hasLeaderRoleById(interaction.user.id)
+      !hasManagerRoleById(interaction.user.id)
     ) {
       return interaction.editReply("❌ You don’t have permission to view other users’ timesheets.");
     }
