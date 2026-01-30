@@ -504,7 +504,13 @@
     "lastKnownNames": [
       "Justin Ace"
     ],
-    "logs": [],
-    "active": "2026-01-30T12:42:41.651Z"
+    "logs": [
+      {
+        "start": "2026-01-30T12:42:41.651Z",
+        "end": "2026-01-30T17:24:51.785Z",
+        "hours": 4.702815
+      }
+    ],
+    "active": null
   }
 }
