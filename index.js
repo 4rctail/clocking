@@ -661,71 +661,99 @@ client.on("interactionCreate", async interaction => {
   });
 
     
-    // -------- TOTAL HOURS (ALL USERS) --------
+    // ==========================================================
+    // TOTAL HOURS (WITH OPTIONAL DATE RANGE + HISTORY)
+    // ==========================================================
     if (interaction.commandName === "totalhr") {
       await loadFromDisk();
-    
-      // 🔒 MANAGER ONLY
+  
       if (!hasLeaderRoleById(interaction.user.id)) {
-        return interaction.editReply({
-          content: "❌ Only leaders and managers can view total hours.",
-          ephemeral: true,
-        });
+        return interaction.editReply("❌ Only leaders and managers can view total hours.");
       }
-    
-      let lines = [];
-      let grandTotal = 0;
-    
-      for (const user of Object.values(timesheet)) {
-        if (!user?.logs?.length) continue;
-    
-        let total = 0;
-        for (const l of user.logs) {
-          if (typeof l.hours === "number") total += l.hours;
+  
+      const startStr = interaction.options.getString("start");
+      const endStr   = interaction.options.getString("end");
+      const start = parseDatePH(startStr);
+      const end   = parseDatePH(endStr, true);
+  
+      let historyTracks = [];
+      if (start || end) {
+        try {
+          const history = await readFileFromGitHub("timesheetHistory.json");
+          historyTracks = Array.isArray(history.tracks) ? history.tracks : [];
+        } catch {
+          historyTracks = [];
         }
-    
-        total = Math.round(total * 100) / 100;
-        if (total <= 0) continue;
-    
-        grandTotal += total;
-    
-        // Try to fetch member in the guild
-        let displayName = user.name; // fallback
-        if (interaction.guild) {
-          const member =
-            interaction.guild.members.cache.get(user.userId) ||
-            await interaction.guild.members.fetch(user.userId).catch(() => null);
-    
-          if (member) {
-            displayName = `${member.displayName} (${member.user.username})`;
-          } else {
-            displayName = `${user.name} (Unknown username)`;
+      }
+  
+      const combined = new Map();
+  
+      const addLog = (user, log) => {
+        if (!combined.has(user.userId)) {
+          combined.set(user.userId, {
+            userId: user.userId,
+            name: user.name,
+            logs: [],
+          });
+        }
+        combined.get(user.userId).logs.push(log);
+      };
+  
+      // current timesheet
+      for (const user of Object.values(timesheet)) {
+        for (const log of user.logs || []) {
+          const s = new Date(log.start);
+          if ((start && s < start) || (end && s > end)) continue;
+          addLog(user, log);
+        }
+      }
+  
+      // archived history
+      for (const track of historyTracks) {
+        for (const user of Object.values(track.data || {})) {
+          for (const log of user.logs || []) {
+            const s = new Date(log.start);
+            if ((start && s < start) || (end && s > end)) continue;
+            addLog(user, log);
           }
         }
-    
-        lines.push(`**${displayName}** — ${total.toFixed(2)}h`);
       }
-    
+  
+      let lines = [];
+      let grandTotal = 0;
+  
+      for (const user of combined.values()) {
+        let total = user.logs.reduce((t, l) => t + (l.hours || 0), 0);
+        total = Math.round(total * 100) / 100;
+        if (total <= 0) continue;
+  
+        grandTotal += total;
+        lines.push(`**${user.name}** — ${total.toFixed(2)}h`);
+      }
+  
       if (!lines.length) {
-        return interaction.editReply("📭 No tracked hours.");
+        return interaction.editReply("📭 No tracked hours in this range.");
       }
-    
-      grandTotal = Math.round(grandTotal * 100) / 100;
-    
-      // ➕ ADD GRAND TOTAL AT BOTTOM
+  
       lines.push("");
       lines.push(`**🧮 GRAND TOTAL:** **${grandTotal.toFixed(2)}h**`);
-    
+  
+      const rangeLabel =
+        startStr || endStr
+          ? `${startStr || "Beginning"} → ${endStr || "Now"}`
+          : "All time";
+  
       return interaction.editReply({
         embeds: [{
           title: "📊 Total Hours (All Users)",
           color: 0x9b59b6,
           description: lines.join("\n"),
-          footer: { text: "Managers only • Time Tracker" },
+          footer: { text: `Range: ${rangeLabel}` },
           timestamp: new Date().toISOString(),
         }],
       });
     }
+  });
     
 
 
