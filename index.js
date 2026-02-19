@@ -1391,7 +1391,7 @@ client.on("interactionCreate", async interaction => {
       return interaction.editReply("📭 No records found.");
     }
   
-    const isDefaultSelfView = !requestedUser && !startStr && !endStr;
+    const isUnfilteredView = !startStr && !endStr;
 
     // filter logs by date range first
     const filteredLogs = [];
@@ -1401,9 +1401,9 @@ client.on("interactionCreate", async interaction => {
       filteredLogs.push(l);
     }
 
-    // for bare /timesheet view, only return the latest 20 sessions
-    const logsToShow = isDefaultSelfView
-      ? filteredLogs.slice(-20)
+    // for unfiltered /timesheet view (self or user), only return latest 15 sessions
+    const logsToShow = isUnfilteredView
+      ? filteredLogs.slice(-15)
       : filteredLogs;
 
     let total = 0;
@@ -1428,8 +1428,8 @@ client.on("interactionCreate", async interaction => {
     const rangeLabel =
       startStr || endStr
         ? `${startStr || "Beginning"} → ${endStr || "Now"}`
-        : isDefaultSelfView
-          ? "All time (latest 20 shown)"
+        : isUnfilteredView
+          ? "All time (latest 15 shown)"
           : "All time";
   
     // response
@@ -1443,7 +1443,7 @@ client.on("interactionCreate", async interaction => {
           { name: "📅 Range", value: rangeLabel, inline: true },
           {
             name: "🧮 Sessions",
-            value: isDefaultSelfView
+            value: isUnfilteredView
               ? `${count} shown (${filteredLogs.length} total)`
               : String(count),
             inline: true
