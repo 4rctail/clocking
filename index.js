@@ -132,7 +132,6 @@ function formatSession(startISO, endISO) {
     timeZone: PH_TZ,
     month: "long",
     day: "numeric",
-    year: "numeric",
   };
 
   const timeOpts = {
@@ -359,7 +358,6 @@ function parsePHTime(timeStr, dateStr) {
 function formatPH(isoStr) {
   return new Date(isoStr).toLocaleString("en-PH", {
     timeZone: PH_TZ,
-    year: "numeric",
     month: "long",
     day: "numeric",
     hour: "numeric",
@@ -501,7 +499,6 @@ const diffHours = (s, e) =>
 const formatDate = iso =>
   new Date(iso).toLocaleString("en-PH", {
     timeZone: PH_TZ,
-    year: "numeric",
     month: "long",
     day: "numeric",
     hour: "numeric",
