@@ -1391,20 +1391,30 @@ client.on("interactionCreate", async interaction => {
       return interaction.editReply("📭 No records found.");
     }
   
-    // filter logs by date range
+    const isUnfilteredView = !startStr && !endStr;
+
+    // filter logs by date range first
+    const filteredLogs = [];
+    for (const l of record.logs) {
+      const sessionStart = new Date(l.start);
+      if ((start && sessionStart < start) || (end && sessionStart > end)) continue;
+      filteredLogs.push(l);
+    }
+
+    // for unfiltered /timesheet view (self or user), only return latest 15 sessions
+    const logsToShow = isUnfilteredView
+      ? filteredLogs.slice(-15)
+      : filteredLogs;
+
     let total = 0;
     let lines = [];
     let count = 0;
   
-    for (const l of record.logs) {
-      const sessionStart = new Date(l.start);
-  
-      if ((start && sessionStart < start) || (end && sessionStart > end)) continue;
-  
+    for (const l of logsToShow) {
       const hours = (new Date(l.end) - new Date(l.start)) / 3600000;
       total += hours;
       count++;
-  
+
       lines.push(
         `**${count}.** ${formatSession(l.start, l.end)} — **${Math.round(hours * 100) / 100}h**`
       );
@@ -1418,7 +1428,9 @@ client.on("interactionCreate", async interaction => {
     const rangeLabel =
       startStr || endStr
         ? `${startStr || "Beginning"} → ${endStr || "Now"}`
-        : "All time";
+        : isUnfilteredView
+          ? "All time (latest 15 shown)"
+          : "All time";
   
     // response
     return interaction.editReply({
@@ -1429,7 +1441,13 @@ client.on("interactionCreate", async interaction => {
           { name: "👤 User", value: displayName, inline: true },
           { name: "🆔 User ID", value: targetUser.id, inline: true },
           { name: "📅 Range", value: rangeLabel, inline: true },
-          { name: "🧮 Sessions", value: String(count), inline: true },
+          {
+            name: "🧮 Sessions",
+            value: isUnfilteredView
+              ? `${count} shown (${filteredLogs.length} total)`
+              : String(count),
+            inline: true
+          },
           { name: "⏱ Total Hours", value: `${Math.round(total * 100) / 100}h`, inline: true },
           { name: "📋 Logs", value: lines.join("\n"), inline: false },
         ],
