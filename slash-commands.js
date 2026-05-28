@@ -152,7 +152,7 @@ export const slashCommands = [
       {
         name: "session",
         type: 4,
-        description: "Session number (1,2,3...)",
+        description: "Session number 1-15, or 16 to add",
         required: true,
       },
       {
@@ -166,6 +166,12 @@ export const slashCommands = [
         type: 3,
         description: "New end time (HH:MM or 0)",
         required: true,
+      },
+      {
+        name: "date",
+        type: 3,
+        description: "PH date for adding session 16 (MM/DD/YYYY)",
+        required: false,
       },
     ],
   },
