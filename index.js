@@ -23,6 +23,7 @@ const GIT_TOKEN = process.env.GIT_TOKEN;
 const GIT_USER = process.env.GIT_USER;
 const GIT_REPO = process.env.GIT_REPO;
 const GIT_BRANCH = process.env.GIT_BRANCH || "main";
+const AUTO_DEPLOY_COMMANDS = process.env.AUTO_DEPLOY_COMMANDS !== "false";
 // =======================
 // DISCORD CLIENT
 // =======================
@@ -91,6 +92,11 @@ async function syncSlashCommandsForGuild(guildId) {
 }
 
 client.on("ready", async () => {
+  if (!AUTO_DEPLOY_COMMANDS) {
+    console.log("ℹ️ Automatic slash command deploy disabled (AUTO_DEPLOY_COMMANDS=false).");
+    return;
+  }
+
   if (slashCommandsSynced) return;
   slashCommandsSynced = true;
 
@@ -106,6 +112,7 @@ client.on("ready", async () => {
 });
 
 client.on("guildCreate", async (guild) => {
+  if (!AUTO_DEPLOY_COMMANDS) return;
   await syncSlashCommandsForGuild(guild.id);
 });
 
@@ -615,6 +622,24 @@ function appendLogs(userId, newLogs) {
 }
 
 
+
+
+function isValidPHDateString(dateStr) {
+  const match = String(dateStr || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return false;
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  if (!month || !day || !year) return false;
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
 
 /**
  * Parse HH:MM string into a Date in PH timezone on a given date.
@@ -1931,6 +1956,102 @@ client.on("interactionCreate", async interaction => {
         return interaction.editReply("❌ You must provide both start and end times.");
       }
   
+      // ==================================================
+      // ⏱️ STRICT HH:MM VALIDATION
+      // ==================================================
+      const START_HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+      const END_HHMM_EXTENDED = /^(?:([01]\d|2[0-3])|([2-4]\d)):[0-5]\d$/;
+      const isAddingSession = sessionIndex === 16;
+
+      if (isAddingSession) {
+        if (startStr === "0" && endStr === "0") {
+          return interaction.editReply(
+            "❌ Session 16 is for adding a new session. Use session 1-15 with started:0 and ended:0 to delete."
+          );
+        }
+
+        if (!START_HHMM.test(startStr) || !END_HHMM_EXTENDED.test(endStr)) {
+          return interaction.editReply(
+            "❌ Time format must be **HH:MM**. Start accepts 00:00-23:59, end accepts 00:00-49:59 (24:00+ becomes next day)."
+          );
+        }
+
+        const dateStr = interaction.options.getString("date");
+        if (!isValidPHDateString(dateStr)) {
+          return interaction.editReply(
+            "❌ Adding session 16 requires a valid PH date in **MM/DD/YYYY** format, for example `05/28/2026`."
+          );
+        }
+
+        const member = await safeGetMember(interaction, targetUser.id);
+        const displayName =
+          member?.displayName ||
+          targetUser.globalName ||
+          targetUser.username;
+
+        const record = ensureUserRecord(targetUser.id, displayName);
+        const newStart = parsePHTime(startStr, dateStr);
+        const newEnd = parseExtendedEndPHTime(endStr, dateStr);
+
+        if (!newStart || !newEnd || newStart >= newEnd) {
+          return interaction.editReply(
+            "❌ Invalid times. Ensure start < end and format is HH:MM."
+          );
+        }
+
+        const conflictingLog = record.logs.find((log) => {
+          const existingStart = new Date(log.start);
+          const existingEnd = new Date(log.end);
+          return newStart < existingEnd && newEnd > existingStart;
+        });
+
+        if (conflictingLog) {
+          return interaction.editReply(
+            `❌ New session overlaps an existing session: ${formatSession(conflictingLog.start, conflictingLog.end)}`
+          );
+        }
+
+        const hours = (newEnd - newStart) / 3600000;
+        const roundedHours = Math.round(hours * 100) / 100;
+        record.logs.push({
+          start: newStart.toISOString(),
+          end: newEnd.toISOString(),
+          hours: roundedHours,
+        });
+        record.logs.sort((a, b) => new Date(a.start) - new Date(b.start));
+
+        const insertedIndex = record.logs.findIndex(
+          (log) => log.start === newStart.toISOString() && log.end === newEnd.toISOString()
+        ) + 1;
+
+        await persist();
+
+        return interaction.editReply({
+          embeds: [{
+            title: "➕ Session Added",
+            color: 0x2ecc71,
+            fields: [
+              { name: "👤 User", value: displayName, inline: true },
+              { name: "🆔 User ID", value: targetUser.id, inline: true },
+              { name: "📝 Added As", value: `#${insertedIndex}`, inline: true },
+              { name: "📅 PH Date", value: dateStr, inline: true },
+              { name: "▶️ Start", value: formatDate(newStart.toISOString()), inline: true },
+              { name: "⏹ End", value: formatDate(newEnd.toISOString()), inline: true },
+              { name: "⏱ Duration", value: `${roundedHours}h`, inline: true },
+              {
+                name: "👮 Added by",
+                value:
+                  interaction.member?.displayName ||
+                  interaction.user.username,
+                inline: true,
+              },
+            ],
+            footer: { text: "Timesheet reordered by session start time" },
+            timestamp: new Date().toISOString(),
+          }],
+        });
+      }
+
       const record = timesheet[targetUser.id];
       if (!record || !Array.isArray(record.logs) || record.logs.length === 0) {
         return interaction.editReply("⚠️ This user has no sessions to edit.");
@@ -1942,7 +2063,7 @@ client.on("interactionCreate", async interaction => {
       const visibleIndex = sessionIndex - 1;
       if (visibleIndex >= editableLogs.length) {
         return interaction.editReply(
-          `⚠️ You can only edit the latest ${editableLogs.length} session(s), matching /timesheet view order.`
+          `⚠️ You can only edit the latest ${editableLogs.length} session(s), matching /timesheet view order. Use session 16 to add a new session.`
         );
       }
 
@@ -1988,12 +2109,6 @@ client.on("interactionCreate", async interaction => {
         });
       }
   
-      // ==================================================
-      // ⏱️ STRICT HH:MM VALIDATION
-      // ==================================================
-      const START_HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
-      const END_HHMM_EXTENDED = /^(?:([01]\d|2[0-3])|([2-4]\d)):[0-5]\d$/;
-
       if (!START_HHMM.test(startStr) || !END_HHMM_EXTENDED.test(endStr)) {
         return interaction.editReply(
           "❌ Time format must be **HH:MM**. Start accepts 00:00-23:59, end accepts 00:00-49:59 (24:00+ becomes next day). Use `0` + `0` to delete a session."
