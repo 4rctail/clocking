@@ -1783,12 +1783,17 @@ client.on("interactionCreate", async interaction => {
         combined.get(user.userId).logs.push(log);
       };
   
+      const addLogIfInRange = (user, log) => {
+        const sessionStart = new Date(log.start);
+        const sessionEnd = new Date(log.end);
+        if (!sessionOverlapsRange(sessionStart, sessionEnd, start, end)) return;
+        addLog(user, log);
+      };
+
       // current timesheet
       for (const user of Object.values(timesheet)) {
         for (const log of user.logs || []) {
-          const s = new Date(log.start);
-          if ((start && s < start) || (end && s > end)) continue;
-          addLog(user, log);
+          addLogIfInRange(user, log);
         }
       }
   
@@ -1796,9 +1801,7 @@ client.on("interactionCreate", async interaction => {
       for (const track of historyTracks) {
         for (const user of Object.values(track.data || {})) {
           for (const log of user.logs || []) {
-            const s = new Date(log.start);
-            if ((start && s < start) || (end && s > end)) continue;
-            addLog(user, log);
+            addLogIfInRange(user, log);
           }
         }
       }
